@@ -1179,7 +1179,8 @@ struct ParentBodyRecoveryNative {
     UniValue block_params{UniValue::VARR};
     std::vector<UniValue>::const_iterator peer,service;
     UniValue reply;
-    std::chrono::steady_clock::time_point deadline;
+    std::chrono::steady_clock::time_point deadline, peer_requested_at;
+    std::set<int64_t> attempted_peers;
     int height{0};
     ParentHeaderRpc rpc;
 
@@ -1214,7 +1215,9 @@ struct ParentBodyRecoveryNative {
         case 7: throw std::runtime_error("pruned parent block requires recovery outside consensus locks");
         case 8: deadline=std::chrono::steady_clock::now()+std::chrono::seconds{drivechain::PARENT_RECOVERY_SECONDS}; return 1;
         case 12: return std::chrono::steady_clock::now()>=deadline;
-        case 13: throw std::runtime_error("parent block recovery timed out");
+        case 13: throw std::runtime_error(strprintf(
+            "parent block recovery timed out after trying %u peers; retain required parent blocks or provide an archival source",
+            attempted_peers.size()));
         case 16: wait(); return 1;
         case 19: throw std::runtime_error("getblock failed during parent block recovery");
         case 21: throw std::runtime_error("parent block height changed during recovery");
@@ -1263,6 +1266,8 @@ struct ParentBodyRecoveryNative {
         case 411: {
             UniValue params(UniValue::VARR);
             params.push_back(hash); params.push_back((*peer)["id"]);
+            attempted_peers.insert((*peer)["id"].getInt<int64_t>());
+            peer_requested_at = std::chrono::steady_clock::now();
             return Request("getblockfrompeer",params);
         }
         case 412: return peers.isArray();
@@ -1270,6 +1275,10 @@ struct ParentBodyRecoveryNative {
         case 414: peer=peers.getValues().begin(); return 1;
         case 415: peers=auxiliary["result"]; auxiliary.setNull(); return 1;
         case 417: auxiliary.setNull(); peers.setNull(); return 1;
+        case 418: return attempted_peers.contains((*peer)["id"].getInt<int64_t>());
+        case 420: return std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - peer_requested_at).count();
+        case 421: return attempted_peers.size();
         case 36:
             if (!deadline_action) throw std::logic_error("missing recovery deadline action");
             return (*deadline_action)(index);

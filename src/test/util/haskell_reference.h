@@ -10,12 +10,15 @@
 #include <crypto/common.h>
 #include <algorithm>
 #include <chrono>
+#include <tinyformat.h>
+#include <set>
 #include <univalue.h>
 #include <haskell/bmm_constants.h>
 #include <primitives/transaction.h>
 #include <hash.h>
 
-// Preserved predecessor retrieval entry for differential tests only.
+// Reference retrieval adapter for differential tests. It implements the same
+// native callback contract as production; recovery policy remains in Haskell.
 namespace drivechain {
 
 /** Availability only. The caller must authenticate the returned block bytes.
@@ -38,7 +41,8 @@ UniValue FetchParentBlockBody(const std::string& hash, bool allow_recovery,
     block_params.push_back(0);
     std::vector<UniValue>::const_iterator peer,service;
     UniValue reply;
-    std::chrono::steady_clock::time_point deadline;
+    std::chrono::steady_clock::time_point deadline, peer_requested_at;
+    std::set<int64_t> attempted_peers;
     int height=0;
     haskell::ParentReplayStore(haskell::ReplayStoreFlow::RECOVERY_COMPOSED,[&](uint32_t step) -> int64_t {
         switch (step) {
@@ -51,7 +55,9 @@ UniValue FetchParentBlockBody(const std::string& hash, bool allow_recovery,
         case 8: deadline=std::chrono::steady_clock::now()+std::chrono::seconds{PARENT_RECOVERY_SECONDS}; return 1;
         case 11: check(); return 1;
         case 12: return std::chrono::steady_clock::now()>=deadline;
-        case 13: throw std::runtime_error("parent block recovery timed out");
+        case 13: throw std::runtime_error(strprintf(
+            "parent block recovery timed out after trying %u peers; retain required parent blocks or provide an archival source",
+            attempted_peers.size()));
         case 14: reply=rpc("getblock",block_params); return 1;
         case 16: wait(); return 1;
         case 19: throw std::runtime_error("getblock failed during parent block recovery");
@@ -101,6 +107,8 @@ UniValue FetchParentBlockBody(const std::string& hash, bool allow_recovery,
         case 411: {
             UniValue params(UniValue::VARR);
             params.push_back(hash); params.push_back((*peer)["id"]);
+            attempted_peers.insert((*peer)["id"].getInt<int64_t>());
+            peer_requested_at = std::chrono::steady_clock::now();
             request("getblockfrompeer",params); return 1;
         }
         case 412: return peers.isArray();
@@ -108,6 +116,10 @@ UniValue FetchParentBlockBody(const std::string& hash, bool allow_recovery,
         case 414: peer=peers.getValues().begin(); return 1;
         case 415: peers=auxiliary["result"]; auxiliary.setNull(); return 1;
         case 417: auxiliary.setNull(); peers.setNull(); return 1;
+        case 418: return attempted_peers.contains((*peer)["id"].getInt<int64_t>());
+        case 420: return std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - peer_requested_at).count();
+        case 421: return attempted_peers.size();
         default: throw std::logic_error("invalid parent recovery body action");
         }
     });

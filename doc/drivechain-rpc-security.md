@@ -237,3 +237,22 @@ withdrawal event verification or silently select another fee/slot/endpoint.
 The legacy ECX-only `drivechainpegoutmainfeesats` option is deprecated and unused
 now that its unsafe burn-and-submit path is disabled. It never sets the native
 `sendtomainchain` RPC's explicit coin-denominated `mainchainfee` argument.
+
+## Pruned parent block recovery
+
+A successful `getblockfrompeer` reply schedules a request; it does not prove that
+its body was delivered or retained. Elements polls for the body and, after five
+seconds without delivery, tries a different full-history (`NETWORK`) peer. It
+refreshes the peer list, skips peers already attempted and tries at most three
+peers within the original 30-second recovery deadline. A peer-specific RPC
+rejection advances to another eligible peer. Transport/authentication failures
+and the overall deadline remain failures. Recovery is never performed under
+consensus locks.
+
+Every recovered body still passes the existing block/header authentication,
+Merkle checks and active-chain/height checks. Peer failover changes retrieval
+policy only; it does not establish a new checkpoint or modify consensus rules.
+The parent can immediately prune a fetched block again, and peers may not serve
+old history. Retain required history or provide a reliable archival source;
+these retries do not make pruning coordinated with Elements progress. Parent
+replay still requires a derived-state rebuild after a parent reorganization.

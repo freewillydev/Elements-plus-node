@@ -1710,10 +1710,10 @@ recoveryComposedOrder = forAll ((,,) <$> choose (0,6 :: Int) <*> choose (0,4 :: 
           yes [214,208,209] ++ [(213,height)]
         peers = yes [400] ++ checked ++ yes [415,412,414] ++
           if scenario == 5 then [(401,0),(410,-1)] else
-            yes [401,402,403,404,405,406,407,411] ++ checked ++ yes [417]
+            yes [401,402] ++ [(418,0),(421,0)] ++ yes [403,404,405,406,407,411] ++ checked ++ yes [417]
         poll index = yes [11] ++ [(12,if scenario == 3 then 1 else 0)] ++
           if scenario == 3 then [(13,-1)] else yes [14] ++
-            if index < retries then pruned ++ yes [16] ++ poll (index+1) else
+            if index < retries then pruned ++ yes [16] ++ [(420,0)] ++ poll (index+1) else
               [(101,0)] ++ yes [17,18] ++ header (if scenario == 4 then 13 else 12) ++
                 [(21,-1) | scenario == 4]
         script :: [(Word32,Int64)]
@@ -1739,6 +1739,33 @@ recoveryComposedOrder = forAll ((,,) <$> choose (0,6 :: Int) <*> choose (0,4 :: 
     abi <- run (\action -> bracket (wrapMatchFact (\_ -> action)) freeHaskellFunPtr $ \callback ->
       elements_hs_parent_replay_run 334 callback nullPtr)
     pure $ conjoin [direct === expected,abi === expected]
+
+-- Exercise the actual selection interpreter, including a rejected request,
+-- exclusion of already-tried peers, the global attempt cap, and exhaustion.
+recoveryPeerFailover :: Property
+recoveryPeerFailover = once $ ioProperty $ do
+  let yes steps = [(step,1) | step <- steps]
+      prefix = yes [400,301,302,415,412,414]
+      candidate tried count = yes [401,402] ++ [(418,tried),(421,count)]
+      service = yes [403,404,405,406,407]
+      accepted = yes [411,301,302,417]
+      scripts =
+        [ (prefix ++ candidate 0 0 ++ service ++ [(411,1),(301,0),(409,1)] ++
+             candidate 0 1 ++ service ++ accepted, True)
+        , (prefix ++ candidate 1 1 ++ [(409,1)] ++ candidate 0 1 ++ service ++ accepted, True)
+        , (prefix ++ candidate 0 Constants.parentRecoveryMaxPeers ++ [(409,1),(401,0)], False)
+        , (prefix ++ [(401,0)], False)
+        ]
+  results <- mapM (\(script,expected) -> do
+    seen <- newIORef []
+    result <- runExceptT $ Bmm.retryRecoveryPeer $ Bmm.BodyRecovery $ \step -> do
+      prior <- readIORef seen
+      modifyIORef' seen (++[step])
+      let index = length prior
+      pure $ if index >= length script || fst (script !! index) /= step then -1 else snd (script !! index)
+    observed <- readIORef seen
+    pure (conjoin [result === Right expected, observed === map fst script])) scripts
+  pure (conjoin results)
 
 recoveryComposedBoundary :: Property
 recoveryComposedBoundary = once $ ioProperty $ do
@@ -8940,6 +8967,7 @@ main = do
      ("pruned parent recovery / reply and header admission order",recoveryValidationOrder),
      ("pruned parent recovery / outer deadline, retry and active-height order",recoveryBodyOrder),
      ("pruned parent recovery / composed capabilities, retry trace and failure prefix",recoveryComposedOrder),
+     ("parent recovery / rejected peer, failover, attempt cap and exhaustion",recoveryPeerFailover),
      ("pruned parent recovery / null callback and invalid composed selector",recoveryComposedBoundary),
      ("configuration field parser / byte ABI, lengths and canaries",configurationFieldAbi),
      ("payment URI / selection, admission and invalid ABI",paymentUriAbi),

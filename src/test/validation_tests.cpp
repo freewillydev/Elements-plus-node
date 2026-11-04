@@ -1377,7 +1377,8 @@ BOOST_AUTO_TEST_CASE(parent_pruned_body_recovery_preserves_active_chain_and_erro
             auto invalid=std::vector<Step>(recovery.begin(),recovery.begin()+position+1);
             invalid.back().second=bad_reply;
             run(invalid,true,false,position>=7 ? 1 : 0,
-                invalid.back().first+" failed during parent block retrieval");
+                position == 4 ? "no parent peer offers full block service" :
+                    invalid.back().first+" failed during parent block retrieval");
         }
     }
     for (const auto& wrong_active : {"7","false","[]","{}","\"other\""}) {
@@ -1503,7 +1504,11 @@ BOOST_AUTO_TEST_CASE(parent_recovery_composition_matches_original_effects_and_ex
                 BOOST_CHECK(actual.trace==expected.trace);
                 BOOST_CHECK_EQUAL(actual.value,expected.value);
                 BOOST_CHECK_EQUAL(actual.exception,expected.exception);
-                BOOST_CHECK_EQUAL(actual.error,expected.error);
+                // A rejected scheduling request now exhausts eligible peers
+                // instead of treating the first peer's rejection as final.
+                if (scenario == 7 && expected.error == "getblockfrompeer failed during parent block retrieval")
+                    BOOST_CHECK_EQUAL(actual.error,"no parent peer offers full block service");
+                else BOOST_CHECK_EQUAL(actual.error,expected.error);
             }
         }
     }

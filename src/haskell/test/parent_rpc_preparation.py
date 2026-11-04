@@ -325,6 +325,7 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
         "identity-error": "cannot verify mainnet parent RPC identity",
         "identity-unauthorized": "cannot verify mainnet parent RPC identity",
         "identity-timeout": "cannot verify mainnet parent RPC identity",
+        "recovery-failover": "", "recovery-rejected-peer": "",
         "pruned": "", "body-trailing": "trailing bytes", "body-short": "cannot decode raw parent block",
         "body-merkle": "invalid or mutated transaction Merkle tree", "body-rpc-error": "getblock failed:",
         "body-timeout": "timeout reached", "recovery-nopeer": "no parent peer offers full block service",
@@ -333,6 +334,8 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
     }[mode]
     raw_block = headers[2] + "01" + coinbase.hex()
     recovering = mode in ("pruned", "recovery-nopeer", "recovery-inactive", "recovery-height", "cookie-body-cache")
+    failover = mode in ("recovery-failover", "recovery-rejected-peer")
+    requested_peers = []
     body_calls = [0]
     cookie = data / "parent.cookie"
     old_cookie, new_cookie = "__cookie__:" + "a"*64, "__cookie__:" + "b"*64
@@ -399,7 +402,7 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
             elif block and method == "getblock" and params == [hashes[2], 0]:
                 body_calls[0] += 1
                 result = raw_block
-                if recovering and body_calls[0] <= 2:
+                if (recovering and body_calls[0] <= 2) or (failover and 2 not in requested_peers):
                     result, error, status = None, dict(code=-1, message="Block not available (pruned data)"), 500
                 elif mode == "body-trailing":
                     result += "00"
@@ -411,8 +414,13 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
                     time.sleep(2)
             elif block and method == "getpeerinfo" and params == []:
                 result = [dict(id=1, servicesnames=["NETWORK_LIMITED" if mode == "recovery-nopeer" else "NETWORK"])]
-            elif block and method == "getblockfrompeer" and params == [hashes[2], 1]:
+                if failover:
+                    result += [dict(id=2, servicesnames=["NETWORK"])]
+            elif block and method == "getblockfrompeer" and params[0] == hashes[2] and params[1] in (1, 2):
+                requested_peers.append(params[1])
                 result = {}
+                if mode == "recovery-rejected-peer" and params[1] == 1:
+                    result, error, status = None, dict(code=-8, message="peer disconnected"), 500
             else:
                 failures.append("unexpected RPC request")
                 result = None
@@ -474,7 +482,11 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
                 assert calls[0] == ("getblock", [hashes[2], 0]), calls
                 assert all(params != [967680] for _, params in calls), calls
             if not expected_error:
-                assert body_calls[0] == (3 if recovering else 2 if mode == "cookie-body-rotate" else 1), calls
+                if failover:
+                    assert requested_peers == [1, 2], requested_peers
+                    assert body_calls[0] >= 2, body_calls
+                else:
+                    assert body_calls[0] == (3 if recovering else 2 if mode == "cookie-body-rotate" else 1), calls
                 if recovering:
                     assert ("getblockfrompeer", [hashes[2], 1]) in calls, calls
         assert calls and not failures, failures
@@ -506,7 +518,7 @@ if __name__ == "__main__":
         for mode in ("identity-wrong", "identity-upper", "identity-null", "identity-error",
                      "identity-unauthorized", "identity-timeout"):
             check_header(unit_tests, directory, mode, composed=True)
-        for mode in ("match", "pruned", "body-trailing", "body-short", "body-merkle", "body-rpc-error",
+        for mode in ("match", "pruned", "recovery-failover", "recovery-rejected-peer", "body-trailing", "body-short", "body-merkle", "body-rpc-error",
                      "body-timeout", "recovery-nopeer", "recovery-inactive", "recovery-height",
                      "cookie-body-rotate", "cookie-body-cache"):
             check_header(unit_tests, directory, mode, composed=True, block=True)

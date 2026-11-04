@@ -325,7 +325,7 @@ instance Validation RecoveryFlow where
       where failure action = 65536+256+action
     RecoveryPeerFlow phase result -> transition phase result
       [(1,(65536+256+10,2)),(2,(9,3)),(3,(9,4)),(4,(5,5)),
-       (5,(9,6)),(6,(8,7)),(7,(8,11)),(8,(5,5)),(9,(1,1)),(11,(-10,-10))]
+       (5,(9,6)),(6,(8,7)),(7,(8,11)),(8,(5,5)),(9,(1,1)),(11,(9,-10))]
     RecoveryPeerReplyFlow 0 _ -> 12
     RecoveryPeerReplyFlow phase result
       | phase>=12 -> transition phase result [(12,(65536+256+13,14)),(14,(1,1))]
@@ -340,6 +340,7 @@ class RecoveryHeader op where
   recoveryHeight :: op -> ExceptT Int32 IO Int64
 class RecoveryPeers op where
   requestRecoveryPeer :: op -> ExceptT Int32 IO ()
+  retryRecoveryPeer :: op -> ExceptT Int32 IO Bool
 class RecoveryEffects op where
   recoveryEffect :: op -> Word32 -> IO Int64
 
@@ -383,26 +384,61 @@ instance RecoveryHeader BodyRecovery where
     height <- lift (native 213)
     unless (height >= 0 && height <= 2147483647) (throwE (-1))
     pure height
-instance RecoveryPeers BodyRecovery where
-  requestRecoveryPeer value@(BodyRecovery native) = do
-    recoveryEffectChecked value 400
-    checkRecoveryReply value
-    recoveryEffectChecked value 415
-    recoveryAccepted $ recoveryFlow 14 RecoveryPeerReplyFlow $ \step ->
-      if step == 11 then fmap (either (const (-1)) (const 1)) $ runExceptT $ do
+-- Native code owns RPC envelopes, clocks and attempted-peer storage. Selection,
+-- retry limits and failure policy remain here. Refresh the peer list on retry;
+-- a scheduled request is not evidence that a block has been delivered.
+selectRecoveryPeer :: Bool -> BodyRecovery -> ExceptT Int32 IO Bool
+selectRecoveryPeer required value@(BodyRecovery native) = do
+  recoveryEffectChecked value 400
+  checkRecoveryReply value
+  recoveryEffectChecked value 415
+  code <- lift $ recoveryFlow 14 RecoveryPeerReplyFlow $ \step ->
+    fmap (either (const (-1)) id) $ runExceptT $ case step of
+      2 -> do
+        valid <- lift (native 402)
+        if valid /= 1 then pure valid else do
+          tried <- lift (native 418)
+          unless (tried == 0 || tried == 1) (throwE (-1))
+          count <- lift (native 421)
+          unless (count >= 0) (throwE (-1))
+          pure (if tried == 0 && count < Constants.parentRecoveryMaxPeers then 1 else 0)
+      10 | not required -> pure 1 -- Exhausted candidates: keep polling the pending request.
+      11 -> do
         recoveryEffectChecked value 411
-        checkRecoveryReply value
-        recoveryEffectChecked value 417
-      else native (400+step)
+        ok <- lift (native 301)
+        present <- if ok == 1 then lift (native 302) else pure ok
+        unless (ok `elem` [0,1] && present `elem` [0,1]) (throwE (-1))
+        if ok == 1 && present == 1 then recoveryEffectChecked value 417 >> pure 1
+          else pure 0 -- An RPC rejection of one peer must not hide another peer.
+      _ -> lift (native (400+step))
+  case code of
+    0 -> pure True
+    1 | not required -> pure False
+    _ -> throwE (-1)
+
+instance RecoveryPeers BodyRecovery where
+  requestRecoveryPeer value = void (selectRecoveryPeer True value)
+  retryRecoveryPeer = selectRecoveryPeer False
 
 recoverParentBody :: (RecoveryReplies op, RecoveryHeader op, RecoveryPeers op, RecoveryEffects op) => op -> IO Int32
 recoverParentBody value = do
   initialHeight <- newIORef 0
+  exhausted <- newIORef False
   recoveryFlow 21 RecoveryBodyFlow $ \step -> fmap (either (const (-1)) id) $ runExceptT $ case step of
     2 -> boolean <$> isPrunedReply value
     15 -> boolean <$> isPrunedReply value
     9 -> recoveryHeight value >>= lift . writeIORef initialHeight >> pure 1
     10 -> requestRecoveryPeer value >> pure 1
+    16 -> do
+      recoveryEffectChecked value 16
+      elapsed <- lift (recoveryEffect value 420)
+      unless (elapsed >= 0) (throwE (-1))
+      done <- lift (readIORef exhausted)
+      when (elapsed >= Constants.parentRecoveryPeerDelaySeconds && not done) $ do
+        recoveryEffectChecked value 11
+        found <- retryRecoveryPeer value
+        unless found (lift (writeIORef exhausted True))
+      pure 1
     20 -> do
       current <- recoveryHeight value
       initial <- lift (readIORef initialHeight)

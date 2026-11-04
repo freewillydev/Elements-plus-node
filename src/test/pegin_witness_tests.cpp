@@ -21,6 +21,7 @@
 #include <limits>
 #include <type_traits>
 #include <set>
+#include <thread>
 #include <hash.h>
 #include <haskell/bridge.h>
 #include <test/util/haskell_reference.h>
@@ -2417,7 +2418,8 @@ BOOST_AUTO_TEST_CASE(parent_header_native_http_transport)
             accepted = ReadDrivechainParentBlock(consensus,epoch,hash,6,block,
                 std::string{body_mode} == "raw" ? nullptr : &verified,&error,
                 {source,recovery_budget,std::chrono::steady_clock::now,[] { return true; },
-                 source.request,[] { throw std::logic_error("native recovery used deadline hook"); },[] {},
+                 source.request,[] { throw std::logic_error("native recovery used deadline hook"); },
+                 [] { std::this_thread::sleep_for(std::chrono::milliseconds{10}); },
                  [&]() -> const std::vector<uint8_t>& { return challenge; }});
         } else if (composed) {
             auto consensus = Params().GetConsensus();
@@ -2428,7 +2430,7 @@ BOOST_AUTO_TEST_CASE(parent_header_native_http_transport)
     catch (const std::exception& e) { error = e.what(); }
     if (composed) BOOST_CHECK_EQUAL(epoch.load(), std::getenv("ELEMENTS_TEST_NETWORK_REVOKED") ? 0U : 77U);
     const bool expected = std::string{expected_error}.empty();
-    BOOST_CHECK_EQUAL(accepted, expected);
+    BOOST_CHECK_MESSAGE(accepted == expected, "parent recovery result: " << error);
     if (body_mode) {
         BOOST_CHECK(!recovery_budget);
         if (expected) BOOST_CHECK(block.GetHash() == hash);

@@ -206,6 +206,11 @@ parentHashHexLength = 64
 parentRecoverySeconds :: Int64
 parentRecoverySeconds = 30
 
+-- Retrieval policy only: do not extend the overall authenticated recovery budget.
+parentRecoveryPeerDelaySeconds, parentRecoveryMaxPeers :: Int64
+parentRecoveryPeerDelaySeconds = 5
+parentRecoveryMaxPeers = 3
+
 replayIdentityDomain :: String
 replayIdentityDomain = "ELEMENTS_AUTHENTICATED_PARENT_REPLAY_STORE_V4"
 
