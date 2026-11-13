@@ -1559,9 +1559,9 @@ struct ParentNetworkNative {
     {
         switch (step) {
         case 0: return consensus->hashGenesisBlock == uint256S(ElementsDrivechainIdentity::GENESIS_HASH);
-        case 1: params.setArray(); params.push_back(967680); recover = true; return 1;
+        case 1: params.setArray(); params.push_back(973728); recover = true; return 1;
         case 2: return PrepareRequest();
-        case 3: return network_hash == uint256S("00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042");
+        case 3: return network_hash == uint256S("0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed");
         case 4: transport.reset(); replay_epoch->store(0, std::memory_order_release); return 1;
         case 5: if (error) error->assign(input.begin(), input.end()); return 1;
         case 6:

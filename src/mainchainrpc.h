@@ -38,8 +38,9 @@ class arith_uint256;
 namespace Consensus { struct Params; }
 
 /** Operational RPC identity check, separate from the immutable replay bootstrap.
- * The Betanet/Bitcoin shared genesis and pre-fork checkpoint cannot distinguish
- * the networks. Never cache this check across changes of the parent RPC source.
+ * The ECX/Bitcoin shared genesis and pre-fork checkpoint cannot distinguish
+ * the networks. Require ECX mainnet's fork block at height 973728. Never cache
+ * this check across changes of the parent RPC source.
  */
 bool CheckDrivechainParentRpcNetwork(const Consensus::Params& consensus,
     const std::function<UniValue(const std::string&, const UniValue&)>& request,

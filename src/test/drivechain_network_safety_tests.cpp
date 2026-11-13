@@ -50,7 +50,7 @@ BOOST_AUTO_TEST_CASE(parent_network_rejects_shared_ancestry_and_malformed_replie
 {
     Consensus::Params consensus{};
     consensus.hashGenesisBlock = uint256S(ElementsDrivechainIdentity::GENESIS_HASH);
-    const std::string correct{"00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"};
+    const std::string correct{"0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"};
     UniValue response{correct};
     unsigned calls{0};
     bool unavailable{false};
@@ -58,7 +58,7 @@ BOOST_AUTO_TEST_CASE(parent_network_rejects_shared_ancestry_and_malformed_replie
         ++calls;
         BOOST_CHECK_EQUAL(method, "getblockhash");
         BOOST_REQUIRE_EQUAL(params.size(), 1U);
-        BOOST_CHECK_EQUAL(params[0].getInt<int>(), 967680);
+        BOOST_CHECK_EQUAL(params[0].getInt<int>(), 973728);
         if (unavailable) throw std::runtime_error("parent unavailable");
         return response;
     };
@@ -71,8 +71,12 @@ BOOST_AUTO_TEST_CASE(parent_network_rejects_shared_ancestry_and_malformed_replie
     BOOST_CHECK(check(&error));
     BOOST_CHECK_EQUAL(epoch.load(), 42U);
     BOOST_CHECK(snapshot.EpochMatches(24, epoch.load()));
-    for (const auto& rejected : {UniValue(), UniValue(UniValue::VARR), UniValue(967680),
+    for (const auto& rejected : {UniValue(), UniValue(UniValue::VARR), UniValue(973728),
          UniValue(std::string{ElementsDrivechainIdentity::PARENT_GENESIS}),
+         // Neither the retired Betanet fork nor Bitcoin's block at the mainnet
+         // fork height establishes ECX mainnet identity.
+         UniValue("00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"),
+         UniValue("0000000000000000000104150b08ff89bbb2d11bab42c245c82b8165ab2e2c11"),
          UniValue(std::string(64, '0')), UniValue(correct.substr(1)),
          UniValue(" " + correct), UniValue(correct + "00")}) {
         response = rejected;
@@ -106,7 +110,7 @@ BOOST_AUTO_TEST_CASE(parent_network_preserves_exception_scope_and_exact_identity
 {
     Consensus::Params consensus{};
     consensus.hashGenesisBlock = uint256S(ElementsDrivechainIdentity::GENESIS_HASH);
-    const std::string correct{"00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"};
+    const std::string correct{"0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"};
     std::atomic<uint64_t> epoch{42};
     std::string error{"unchanged"};
     const auto nonstandard = [](const std::string&, const UniValue&) -> UniValue { throw 7; };
@@ -124,7 +128,7 @@ BOOST_AUTO_TEST_CASE(parent_network_preserves_exception_scope_and_exact_identity
         epoch.store(42);
         BOOST_CHECK(!VerifyDrivechainParentRpcNetwork(consensus,wrong,epoch,&error));
         BOOST_CHECK_EQUAL(epoch.load(),0U);
-        BOOST_CHECK_EQUAL(error,"parent RPC does not serve the mainnet parent post-fork block at height 967680");
+        BOOST_CHECK_EQUAL(error,"parent RPC does not serve the mainnet parent post-fork block at height 973728");
     }
     // Canonical case is significant even when the numeric hash is identical.
     auto upper = correct;
@@ -211,7 +215,7 @@ BOOST_AUTO_TEST_CASE(network_failure_is_unavailable_not_an_orphaned_anchor)
             const auto request = [&](const std::string&, const UniValue&) -> UniValue {
                 if (source == 2) throw std::runtime_error("parent unavailable");
                 return UniValue(source == 0 || (source == 3 && anchor_reads == 0) ?
-                    "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042" :
+                    "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed" :
                     std::string(64, '0'));
             };
             DrivechainAnchorStatus status;

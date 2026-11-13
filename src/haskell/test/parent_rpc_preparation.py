@@ -220,7 +220,7 @@ def check(binary, directory, mode):
 def check_network(binary, directory, mode):
     data = directory / ("network-" + mode)
     data.mkdir()
-    correct = "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"
+    correct = "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"
     cookie = data / "parent.auth"
     old_cookie, new_cookie = "__cookie__:" + "a" * 64, "__cookie__:" + "b" * 64
     cookie.write_text(old_cookie + "\n")
@@ -240,7 +240,7 @@ def check_network(binary, directory, mode):
             expected_auth = (new_cookie if len(calls) > 1 else old_cookie) if mode.startswith("cookie-") else "fixture:fixture"
             if self.headers.get("Authorization") != "Basic " + base64.b64encode(expected_auth.encode()).decode():
                 failures.append("unexpected authentication")
-            if request["method"] != "getblockhash" or request["params"] != [967680]:
+            if request["method"] != "getblockhash" or request["params"] != [973728]:
                 failures.append("unexpected parent request")
             if mode == "timeout":
                 time.sleep(2)
@@ -354,8 +354,8 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
             if self.headers.get("Authorization") != "Basic " + base64.b64encode(expected.encode()).decode():
                 failures.append("unexpected authentication")
             status, error = 200, None
-            if composed and method == "getblockhash" and params == [967680]:
-                result = "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"
+            if composed and method == "getblockhash" and params == [973728]:
+                result = "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"
                 if mode == "identity-wrong":
                     result = "00"*32
                 elif mode == "identity-upper":
@@ -473,14 +473,14 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
             assert len(calls) == (9 if mode == "cookie-rotate" else 8) + int(composed), calls
             assert calls[-1] == ("getblockheader", [hashes[0], False]), calls
         if composed:
-            assert calls[0] == ("getblockhash", [967680]), calls
+            assert calls[0] == ("getblockhash", [973728]), calls
             if mode.startswith("identity-"):
                 assert len(calls) == 1, calls
         if block and not mode.startswith("identity-"):
             assert any(method == "getblock" for method, _ in calls), calls
             if body_only:
                 assert calls[0] == ("getblock", [hashes[2], 0]), calls
-                assert all(params != [967680] for _, params in calls), calls
+                assert all(params != [973728] for _, params in calls), calls
             if not expected_error:
                 if failover:
                     assert requested_peers == [1, 2], requested_peers

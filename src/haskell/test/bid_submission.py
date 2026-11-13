@@ -28,7 +28,7 @@ def check(binary, directory, mode, expected_error):
         return re.search(r"\b" + name + r'\[\]\{\s*"([0-9a-f]{64})"', identity)[1]
 
     parent_hash = "112233".zfill(64)
-    network_hash = "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042"
+    network_hash = "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"
     calls, failures, broadcasts = [], [], []
     pending = [None]
     change = "0014" + "07" * 20
@@ -47,12 +47,12 @@ def check(binary, directory, mode, expected_error):
                 failures.append("wrong endpoint: " + self.path)
             result, error = None, None
             if method == "getblockhash":
-                values = {0: constant("PARENT_GENESIS"), 967680: network_hash,
+                values = {0: constant("PARENT_GENESIS"), 973728: network_hash,
                           967679: constant("PARENT_CHECKPOINT_HASH")}
                 result = values[params[0]]
-                if params[0] == {"genesis": 0, "network": 967680, "checkpoint": 967679}.get(mode):
+                if params[0] == {"genesis": 0, "network": 973728, "checkpoint": 967679}.get(mode):
                     result = "11" * 32
-                if mode == "network-error" and params == [967680]:
+                if mode == "network-error" and params == [973728]:
                     result, error = None, dict(code=-8, message="network fixture offline")
             elif method == "getbestblockhash":
                 result = parent_hash

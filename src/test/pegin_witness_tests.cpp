@@ -2127,11 +2127,11 @@ BOOST_AUTO_TEST_CASE(parent_network_header_composition_preserves_failure_order_a
             unsigned hash_reads{0};
             const auto request = [&](const std::string& method,const UniValue& params) {
                 event(method + ":" + params.write());
-                if (method == "getblockhash" && params[0].getInt<int>() == 967680) {
+                if (method == "getblockhash" && params[0].getInt<int>() == 973728) {
                     if (scenario == 1) return UniValue(uint256::ONE.GetHex());
                     if (scenario == 2) throw std::runtime_error("identity unavailable");
                     if (scenario == 3) return UniValue{};
-                    return UniValue("00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042");
+                    return UniValue("0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed");
                 }
                 if (method == "getblockhash") {
                     const bool genesis = hash_reads++ == 0;
@@ -2260,8 +2260,8 @@ BOOST_AUTO_TEST_CASE(parent_complete_block_workflow_preserves_recovery_authentic
                     [&]() -> const uint256& { event("genesis"); return hash; },
                     [&](const std::string& method,const UniValue& params) {
                         event("header:" + method + ":" + params.write());
-                        if (method == "getblockhash" && params[0].getInt<int>() == 967680)
-                            return UniValue(scenario == 1 ? uint256::ONE.GetHex() : "00000000000000030101ba5cfea54b22becc79f95dc6040beb76e01dd9d04042");
+                        if (method == "getblockhash" && params[0].getInt<int>() == 973728)
+                            return UniValue(scenario == 1 ? uint256::ONE.GetHex() : "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed");
                         if (method == "getblockhash") {
                             const bool genesis = hash_reads++ == 0;
                             return UniValue(((scenario == 2 && genesis) || (scenario == 3 && !genesis)) ? uint256::ONE.GetHex() : hash.GetHex());

@@ -192,7 +192,7 @@ instance ParentNetwork Header where
         matches <- if valid then flag native 3 else pure False
         unless matches $ do
           effect native 4 0
-          networkDiagnostic native (C.pack "parent RPC does not serve the mainnet parent post-fork block at height 967680")
+          networkDiagnostic native (C.pack "parent RPC does not serve the mainnet parent post-fork block at height 973728")
           throwE 0) `catch` \(NetworkFailure message) -> runExceptT $ do
             effect native 4 0
             networkDiagnostic native (C.pack "cannot verify mainnet parent RPC identity: " <> message)

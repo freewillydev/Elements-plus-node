@@ -256,3 +256,12 @@ The parent can immediately prune a fetched block again, and peers may not serve
 old history. Retain required history or provide a reliable archival source;
 these retries do not make pruning coordinated with Elements progress. Parent
 replay still requires a derived-state rebuild after a parent reorganization.
+
+## ECX mainnet parent identity
+
+Production parent RPC admission requires `getblockhash 973728` to return
+`0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed`.
+Bitcoin's block at that height and the retired Betanet fork hash are rejected.
+A failed identity check revokes the published replay epoch; a successful check
+alone never grants replay authorization. This operational check does not replace
+or refreeze the immutable child proposal, genesis or parent replay bootstrap.
