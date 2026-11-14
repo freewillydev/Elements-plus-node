@@ -2378,7 +2378,7 @@ BOOST_AUTO_TEST_CASE(parent_header_native_http_transport)
     BOOST_CHECK_EQUAL(error, "minimum parent confirmations must be positive");
     BOOST_CHECK_EQUAL(verified.height, 99U);
 
-    // Synthetic local HTTP fixtures only; normal unit runs have no endpoint.
+    // Local HTTP fixtures and isolated regtest parents only; normal unit runs have no endpoint.
     const char* port = std::getenv("ELEMENTS_TEST_HEADER_RPC_PORT");
     if (!port) return;
     const char* expected_hash = std::getenv("ELEMENTS_TEST_HEADER_HASH");
@@ -2414,7 +2414,10 @@ BOOST_AUTO_TEST_CASE(parent_header_native_http_transport)
     try {
         if (body_mode) {
             auto consensus = Params().GetConsensus();
-            consensus.hashGenesisBlock = uint256S(ElementsDrivechainIdentity::GENESIS_HASH);
+            // The independent regtest transport harness must not claim the production
+            // child identity. This test-only switch does not alter node behavior.
+            consensus.hashGenesisBlock = std::getenv("ELEMENTS_TEST_INDEPENDENT_PARENT")
+                ? uint256::ONE : uint256S(ElementsDrivechainIdentity::GENESIS_HASH);
             accepted = ReadDrivechainParentBlock(consensus,epoch,hash,6,block,
                 std::string{body_mode} == "raw" ? nullptr : &verified,&error,
                 {source,recovery_budget,std::chrono::steady_clock::now,[] { return true; },
@@ -2437,10 +2440,15 @@ BOOST_AUTO_TEST_CASE(parent_header_native_http_transport)
     }
     if (expected && (!body_mode || std::string{body_mode} != "raw")) {
         BOOST_CHECK_EQUAL(verified.header.GetHash().GetHex(), hash.GetHex());
-        BOOST_CHECK_EQUAL(verified.height, 2U);
-        BOOST_CHECK_EQUAL(verified.confirmations, 6);
-        BOOST_CHECK_EQUAL(verified.median_time_past, 1001U);
-        BOOST_CHECK_EQUAL(verified.chainwork.GetHex(), uint256S("6").GetHex());
+        const auto expected_number = [](const char* name, uint64_t fallback) {
+            const char* value = std::getenv(name);
+            return value ? std::stoull(value) : fallback;
+        };
+        BOOST_CHECK_EQUAL(verified.height, expected_number("ELEMENTS_TEST_EXPECTED_HEIGHT", 2));
+        BOOST_CHECK_EQUAL(verified.confirmations, expected_number("ELEMENTS_TEST_EXPECTED_CONFIRMATIONS", 6));
+        BOOST_CHECK_EQUAL(verified.median_time_past, expected_number("ELEMENTS_TEST_EXPECTED_MTP", 1001));
+        const char* work = std::getenv("ELEMENTS_TEST_EXPECTED_CHAINWORK");
+        BOOST_CHECK_EQUAL(verified.chainwork.GetHex(), uint256S(work ? work : "6").GetHex());
     } else if (!expected) {
         BOOST_CHECK_MESSAGE(error.find(expected_error) != std::string::npos, error);
         BOOST_CHECK_EQUAL(verified.height, std::getenv("ELEMENTS_TEST_BODY_HEADER_PUBLISHED") ? 2U : 99U);

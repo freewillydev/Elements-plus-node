@@ -265,3 +265,28 @@ Bitcoin's block at that height and the retired Betanet fork hash are rejected.
 A failed identity check revokes the published replay epoch; a successful check
 alone never grants replay authorization. This operational check does not replace
 or refreeze the immutable child proposal, genesis or parent replay bootstrap.
+
+## Reproducing pruned-parent integration checks
+
+`contrib/test/pruned_parent_recovery.py` starts two fresh loopback-only ECX
+regtest parents, with wallets, discovery, NAT port mapping and automatic peers
+explicitly disabled. Supply absolute paths to `--bitcoind`, `--bitcoin-cli`,
+`--test-elements` and a `--workdir` for retained test data. Build `test_elements`
+from the same source revision first. The parent binaries must support regtest
+`fastprune`, manual pruning and `getblockfrompeer`.
+
+The test mines 1,100 wallet-free fixture blocks, proves the selected body was
+actually pruned, exercises the native authenticated block reader recovering it
+from the archival parent, restarts the pruned parent and recovers another body.
+It then creates a 51-block reorganization, checks that the disconnected branch
+is rejected and authenticates the replacement. Both processes stop on exit;
+logs and `result.json` remain in a new directory below `--workdir`.
+
+This qualifies retrieval and authentication, not the full Elements replay
+bootstrap or retention coordination. A parent may prune history before a new
+Elements node has replayed it. A reorganization can invalidate the derived
+replay cache and require that history again. Keep an archival recovery source
+available and retain the launch checkpoint and all history needed for initial
+replay; a small prune target and opportunistic peers provide no such guarantee.
+A missing body or stale branch must fail closed, never authorize a deposit,
+withdrawal or BMM commitment from incomplete replay.
