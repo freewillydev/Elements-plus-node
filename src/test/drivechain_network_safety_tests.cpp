@@ -174,6 +174,59 @@ BOOST_AUTO_TEST_CASE(parent_network_native_http_transport)
     else BOOST_CHECK(error.find(expected_error) != std::string::npos);
 }
 
+BOOST_AUTO_TEST_CASE(background_timeout_is_bounded_and_never_overrides_locked_validation)
+{
+    namespace hs = drivechain::haskell;
+    for (bool locked : {false, true}) for (int64_t seconds : {-1, 0, 1, 30, 60, 61}) {
+        unsigned background_reads{0}, writes{0};
+        const auto run = [&] {
+            return hs::ParentReplayStore(hs::ReplayStoreFlow::RPC_TIMEOUT_COMPOSED,
+                [&](uint32_t step) -> int64_t {
+                    switch (step) {
+                    case 1: return locked;
+                    case 2: return 1;
+                    case 3: return 1000000;
+                    case 5: case 14: ++writes; return 1;
+                    case 6: return 0;
+                    case 15: return 1;
+                    case 16: ++background_reads; return seconds;
+                    case 17: throw std::runtime_error("invalid background timeout");
+                    default: throw std::logic_error("unexpected timeout callback");
+                    }
+                });
+        };
+        if (!locked && (seconds < 1 || seconds > 60)) {
+            BOOST_CHECK_THROW(run(), std::runtime_error);
+            BOOST_CHECK_EQUAL(writes, 0U);
+        } else {
+            BOOST_CHECK_EQUAL(run(), 1U);
+            BOOST_CHECK_EQUAL(writes, 1U);
+        }
+        BOOST_CHECK_EQUAL(background_reads, locked ? 0U : 1U);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(native_background_http_allows_slow_parent_but_locked_call_times_out)
+{
+    const char* port = std::getenv("ELEMENTS_TEST_SLOW_PARENT_PORT");
+    if (!port) return;
+    const char* cookie = std::getenv("ELEMENTS_TEST_SLOW_PARENT_COOKIE");
+    BOOST_REQUIRE(cookie);
+    BasicTestingSetup setup{ChainType::ELEMENTS};
+    gArgs.ForceSetArg("-mainchainrpchost", "127.0.0.1");
+    gArgs.ForceSetArg("-mainchainrpcport", port);
+    gArgs.ForceSetArg("-mainchainrpctimeout", "2");
+    gArgs.ForceSetArg("-mainchainrpccookiefile", cookie);
+    // Use the actual default background timeout, not a test-only override.
+    BOOST_CHECK_EQUAL(CallMainChainRPCChecked("getblockcount", UniValue{UniValue::VARR}).getInt<int>(), 42);
+    const auto started = std::chrono::steady_clock::now();
+    {
+        DrivechainParentValidationBudget budget{true};
+        BOOST_CHECK_THROW(CallMainChainRPCChecked("getblockcount", UniValue{UniValue::VARR}), CConnectionFailed);
+    }
+    BOOST_CHECK(std::chrono::steady_clock::now() - started < std::chrono::milliseconds{3500});
+}
+
 BOOST_AUTO_TEST_CASE(parent_active_hash_preserves_native_failure_and_stops_callbacks)
 {
     namespace hs = drivechain::haskell;

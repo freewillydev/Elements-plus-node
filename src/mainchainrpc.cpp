@@ -437,9 +437,13 @@ struct ParentRpcAttempt {
         case 12: return std::chrono::ceil<std::chrono::seconds>(remaining).count();
         case 13: remaining = std::chrono::seconds{configured}; return 1;
         case 14:
-            evhttp_connection_set_timeout(evcon.get(),
-                                          gArgs.GetIntArg("-mainchainrpctimeout", DEFAULT_HTTP_CLIENT_TIMEOUT));
+            evhttp_connection_set_timeout(evcon.get(), configured);
             return 1;
+        case 15: return Params().GetConsensus().drivechain_slot.has_value();
+        case 16:
+            configured = gArgs.GetIntArg("-mainchainrpcbackgroundtimeout", 30);
+            return configured;
+        case 17: throw CConnectionFailed("-mainchainrpcbackgroundtimeout must be between 1 and 60 seconds");
         default: throw std::logic_error("invalid parent RPC timeout action");
         }
     }
@@ -539,7 +543,7 @@ struct ParentRpcTransport {
     int64_t Read(uint32_t step)
     {
         if (step > 200 && step < 210) return DrivechainParentDeadlineAction(step - 200);
-        if (step > 300 && step < 315) return attempt->Timeout(step - 300);
+        if (step > 300 && step < 318) return attempt->Timeout(step - 300);
         if (step > 400 && step < 483) return attempt->auth.Read(step - 400);
         switch (step) {
         case 1: return DrivechainParentBudgetActive();

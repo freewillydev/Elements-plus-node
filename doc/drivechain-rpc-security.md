@@ -290,3 +290,17 @@ available and retain the launch checkpoint and all history needed for initial
 replay; a small prune target and opportunistic peers provide no such guarantee.
 A missing body or stale branch must fail closed, never authorize a deposit,
 withdrawal or BMM commitment from incomplete replay.
+
+## Startup and background RPC timeout
+
+Native drivechain startup/background RPC calls use
+`-mainchainrpcbackgroundtimeout=30` seconds by default, restricted to 1..60.
+This lets an otherwise healthy validating parent respond while it performs
+snapshot/background validation or disk work. It is separate from the native
+`-mainchainrpctimeout` setting, which remains restricted to 1..2 seconds.
+
+An active locked-validation budget takes precedence and never reads or uses the
+longer background setting. Existing anchor-warm/recovery deadlines also remain
+in force; the background setting cannot extend them. Ordinary-network timeout
+behavior is unchanged. Failed startup still retries through the service rather
+than skipping parent authentication; this does not solve missing pruned bodies.

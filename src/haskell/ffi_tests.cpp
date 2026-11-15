@@ -700,6 +700,7 @@ static void CheckRpcPreparation()
                 switch (step) {
                 case 1: return budget;
                 case 6: return warm;
+                case 15: return 0;
                 case 3: case 8: return reference ? remaining>0 : remaining;
                 case 11: return reference ? configured>0 : configured;
                 case 12: return reference ? configured<seconds : seconds;
@@ -709,7 +710,15 @@ static void CheckRpcPreparation()
                 }
             };
             try {
-                status = reference ? ReferenceStore(56,action) :
+                const auto reference_action = [&](uint32_t step) -> int64_t {
+                    if (step == 10 || step == 14) {
+                        action(15);
+                        action(10);
+                        return step == 10 ? 1 : action(14);
+                    }
+                    return action(step);
+                };
+                status = reference ? ReferenceStore(56,reference_action) :
                     hs::ParentReplayStore(hs::ReplayStoreFlow::RPC_TIMEOUT_COMPOSED,action);
             } catch (const std::logic_error& e) { error = std::string("logic:") + e.what(); }
             catch (const std::runtime_error& e) { error = std::string("runtime:") + e.what(); }

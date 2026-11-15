@@ -497,6 +497,50 @@ def check_header(binary, directory, mode, composed=False, block=False, body_only
         worker.join()
 
 
+
+def check_slow_background(binary, directory):
+    """A genuine three-second response must work unlocked and time out locked."""
+    data = directory / "slow-background"
+    data.mkdir()
+    cookie = data / ".cookie"
+    value = "__cookie__:" + "c" * 64
+    cookie.write_text(value + "\n")
+    cookie.chmod(0o600)
+    calls = []
+    class Parent(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            assert self.headers["Authorization"] == "Basic " + base64.b64encode(value.encode()).decode()
+            assert request["method"] == "getblockcount"
+            calls.append(request)
+            time.sleep(3)
+            body = json.dumps(dict(result=42, error=None, id=request["id"])).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        def log_message(self, *args):
+            pass
+    parent = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Parent)
+    worker = threading.Thread(target=parent.serve_forever)
+    worker.start()
+    try:
+        env = dict(os.environ, ELEMENTS_TEST_SLOW_PARENT_PORT=str(parent.server_port),
+                   ELEMENTS_TEST_SLOW_PARENT_COOKIE=str(cookie))
+        with (data / "test.log").open("w") as log:
+            subprocess.run([str(binary), "--run_test=drivechain_network_safety_tests/native_background_http_allows_slow_parent_but_locked_call_times_out",
+                            "--report_level=detailed"], env=env, stdout=log, stderr=subprocess.STDOUT,
+                           timeout=15, check=True)
+        assert len(calls) == 2, calls
+    finally:
+        parent.shutdown()
+        worker.join()
+        parent.server_close()
+
+
 if __name__ == "__main__":
     binary = pathlib.Path(sys.argv[1]).resolve(strict=True)
     directory = pathlib.Path(sys.argv[2]).resolve()
@@ -525,4 +569,5 @@ if __name__ == "__main__":
             check_header(unit_tests, directory, mode, block=True, body_only=True)
         for mode in ("identity-wrong", "identity-null", "identity-error"):
             check_header(unit_tests, directory, mode, composed=True, block=True)
+        check_slow_background(unit_tests, directory)
     print("PASS all isolated native parent HTTP preparation cases; nodes stopped", flush=True)

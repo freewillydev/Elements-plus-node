@@ -73,7 +73,16 @@ instance RequestTimeout RpcPreparation where
   configureTimeout (RpcPreparation action) = do
     configured <- newIORef 0
     let positive value = fromIntegral (validate (Record 15 0 value 0 0))
+        -- Locked validation is selected by the existing deadline workflow before
+        -- either branch below. Only unlocked native calls load this setting.
+        loadTimeout = do
+          native <- action 15
+          if native == 0 then action 10 >> pure () else do
+            seconds <- action 16
+            when (seconds < 1 || seconds > 60) (action 17 >> pure ())
         observe step = case step of
+          10 -> loadTimeout >> pure 1
+          14 -> loadTimeout >> action 14
           3 -> positive <$> action step
           8 -> positive <$> action step
           11 -> do
