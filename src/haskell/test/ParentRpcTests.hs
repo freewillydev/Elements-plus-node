@@ -36,7 +36,7 @@ capture fault reply run = do
 timeout :: Property
 timeout = once $ ioProperty $ do
   let values = [minBound,-1000001,-1,0,1,999999,1000000,1000001,4294967296,maxBound] :: [Int64]
-  results <- mapM (\(budget,warm,remaining,configured) -> do
+  results <- mapM (\(budget,warm,native,remaining,configured) -> do
     let remainingSeconds = fromInteger ((toInteger remaining+999999) `div` 1000000)
         reply step = case step of
           1 -> if budget then 1 else 0
@@ -45,18 +45,21 @@ timeout = once $ ioProperty $ do
           8 -> remaining
           11 -> configured
           12 -> remainingSeconds
+          15 -> if native then 1 else 0
+          16 -> 30
           _ -> 1
+        loadTimeout = if native then [15,16] else [15,10]
         expected = if budget then [1,2,3,if remaining>0 then 5 else 4]
-          else if not warm then [1,6,14]
+          else if not warm then [1,6] ++ loadTimeout ++ [14]
           else [1,6,7,8] ++ if remaining<=0 then [9]
-          else [10,11] ++ (if configured>0 then [12] ++ [13 | configured<remainingSeconds] else []) ++ [5]
+          else loadTimeout ++ [11] ++ (if configured>0 then [12] ++ [13 | configured<remainingSeconds] else []) ++ [5]
         status = if (budget || warm) && remaining<=0 then 0 else 1
     checks <- mapM (\fault -> do
       (actual,events) <- capture fault reply (\value -> execute value R.ConfigureTimeout)
       pure (conjoin [actual === if fault<0 then status else -1,
         events === if fault<0 then expected else take (fault+1) expected]))
       [-1..length expected-1]
-    pure (conjoin checks)) [(b,w,r,c) | b <- [False,True], w <- [False,True], r <- values, c <- values]
+    pure (conjoin checks)) [(b,w,n,r,c) | b <- [False,True], w <- [False,True], n <- [False,True], r <- values, c <- values]
   pure (conjoin results)
 
 credentials :: Property

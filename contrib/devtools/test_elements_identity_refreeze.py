@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from elements_identity_refreeze import (
-    Header, IDENTITY_HEADER, assert_current, betanet_bootstrap_commitment,
+    Header, IDENTITY_HEADER, assert_current, mainnet_bootstrap_commitment,
     calculate_fresh, hash256, indexer_bindings,
 )
 
@@ -48,11 +48,11 @@ class FreshIdentityTests(unittest.TestCase):
         result = calculate_fresh(self.header)
         self.assertEqual(result, calculate_fresh(Header(IDENTITY_HEADER)))
         assert_current(self.header, result)
-        self.assertEqual(result.genesis_hash, "fe05f7c76cfb50ef4f5594c761df25581e95a9946a64bc9d8f567235ffa485c9")
-        self.assertEqual(result.proposal_hash, "a9980eaa8bb6893d4baea100f484000b4f72e4640fc0d9f3ebf8a2f29ae63460")
-        self.assertEqual(result.pegged_asset, "2e69819685c22252a706f69ce67ab9ab36a633b91e61f6ee69216d6e1c7e90d3")
-        self.assertEqual(result.data_dir, "elements-native-v1")
-        self.assertEqual(result.p2p_message_start, "97b20d51")
+        self.assertEqual(result.genesis_hash, "96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc")
+        self.assertEqual(result.proposal_hash, "eb411361c94149bf1b37dc147b17eb87307807c9607ac0a9c85ced151ff90ade")
+        self.assertEqual(result.pegged_asset, "3ed19bb316d05817997992a9e36d3d94289c8f2cb7b86fb620405807964d231f")
+        self.assertEqual(result.data_dir, "elements-native-mainnet-v1")
+        self.assertEqual(result.p2p_message_start, "0d5dc8ca")
         self.assertEqual(result.p2p_message_start, hash256(result.p2p_magic_domain.encode())[:4].hex())
         self.assertTrue(result.parent_activation_required)
         self.assertFalse(result.future_parent_milestones_committed)
@@ -75,7 +75,7 @@ class FreshIdentityTests(unittest.TestCase):
             ("HISTORICAL_PROPOSAL_DESCRIPTION_HEX", "00"),
             ("HISTORICAL_PROPOSAL_HASH", "11" * 32),
             ("HISTORICAL_ACTIVATION_HEIGHT", 1),
-            ("PARENT_CHECKPOINT_HEIGHT", 967680),
+            ("PARENT_CHECKPOINT_HEIGHT", 967679),
             ("PARENT_CHECKPOINT_CHAINWORK", "00" * 32),
             ("PARENT_CHECKPOINT_CTIP_TXID", "11" * 32),
             ("PARENT_CHECKPOINT_CTIP_VOUT", 0),
@@ -109,7 +109,7 @@ class FreshIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bootstrap commitment mismatch"):
             calculate_fresh(self.header)
         replace_field(self.header, "PARENT_CHECKPOINT_BOOTSTRAP_STATE_COMMITMENT",
-                      betanet_bootstrap_commitment(self.header))
+                      mainnet_bootstrap_commitment(self.header))
         changed = calculate_fresh(self.header)
         for field in ("genesis_hash", "pegged_asset", "proposal_hash", "identity_commitment"):
             self.assertNotEqual(getattr(original, field), getattr(changed, field))
@@ -122,7 +122,7 @@ class FreshIdentityTests(unittest.TestCase):
         self.assertEqual(bindings["sidechain_slot"], 24)
         self.assertEqual(bindings["rpc_port"], 7071)
         self.assertEqual(bindings["p2p_port"], 7072)
-        self.assertEqual(bindings["p2p_magic_u32_le"].to_bytes(4, "little").hex(), "97b20d51")
+        self.assertEqual(bindings["p2p_magic_u32_le"].to_bytes(4, "little").hex(), "0d5dc8ca")
         self.assertEqual(bindings["native_asset"], self.header.string("PEGGED_ASSET"))
         self.assertEqual(bindings["bech32_hrp"], self.header.string("BECH32_HRP"))
         self.assertEqual(bindings["blech32_hrp"], self.header.string("BLECH32_HRP"))

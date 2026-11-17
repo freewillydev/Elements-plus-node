@@ -25,7 +25,9 @@ peginIdentityPins =
    ("PEGIN_PARENT_GENESIS","000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
    ("PEGIN_ALPHA_MANIFEST","fbd55822590e0e7a3389c2316171068b2fe7ddbb35c52aa010159bfbd92d09e6"),
    ("PEGIN_BETA_GENESIS","fe05f7c76cfb50ef4f5594c761df25581e95a9946a64bc9d8f567235ffa485c9"),
-   ("PEGIN_BETA_MANIFEST","94831880cee118fe5266ebf3945528b370b1a0f668fb76cf2c3ca756b8d1068c")]
+   ("PEGIN_BETA_MANIFEST","94831880cee118fe5266ebf3945528b370b1a0f668fb76cf2c3ca756b8d1068c"),
+   ("PEGIN_MAINNET_GENESIS","96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc"),
+   ("PEGIN_MAINNET_MANIFEST","d993519f7e1d5a1b09d98a9d3a246711266186bc482ad518771023b66ba9cda0")]
 
 peginIdentityHeader :: String
 peginIdentityHeader = unlines $
@@ -308,13 +310,16 @@ bootstrapCatalogs =
      empty 98 "2fb3d32db5bf9f82624a07313ed09713fd271f06f3276034830dba0131280c8c",
      empty 99 "d9825e315ab563c70f38496d0867ecde37a9791b746d47fcec5290a8eda05597",
      empty 255 "3459ab323378afbc87c8719f5807448a79849c481c5a23930a9aa8c93ef5d144"]),
-   (emptyBootstrapVersion, "", [])]
+   (betanetReplayVersion, "", []),
+   (mainnetReplayVersion, "", [])]
   where empty slot active = (slot,active,replicate 64 '0',maxBound,0)
 
-betanetReplayVersion, emptyBootstrapVersion, emptyBootstrapHeight :: Word32
+betanetReplayVersion, mainnetReplayVersion, betanetBootstrapHeight, mainnetBootstrapHeight :: Word32
 betanetReplayVersion = 5
-emptyBootstrapVersion = betanetReplayVersion
-emptyBootstrapHeight = 967679
+mainnetReplayVersion = 6
+betanetBootstrapHeight = 967679
+-- BIP300 state is empty before the first ECX mainnet block, 973728.
+mainnetBootstrapHeight = 973727
 
 bootstrapSlots :: Word32 -> Maybe [BootstrapSlot]
 bootstrapSlots version = lookup version [(v,slots) | (v,_,slots) <- bootstrapCatalogs]
@@ -332,10 +337,14 @@ bootstrapHeader = unlines $
     (version,name,_) <- bootstrapCatalogs] ++
   ["default: return std::nullopt;", "}", "}",
    "static_assert(SlotsForReplayVersion(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION).has_value());",
-   "static_assert(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION != " ++ show emptyBootstrapVersion ++ " ||",
-   "ElementsDrivechainIdentity::PARENT_CHECKPOINT_HEIGHT == " ++ show emptyBootstrapHeight ++ ",",
-   "\"Empty Betanet bootstrap is valid only immediately before BIP300 activation\");",
-   "inline constexpr auto SLOTS = *SlotsForReplayVersion(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION);"]
+   "inline constexpr bool CHECKPOINT_HEADER_ONLY = ElementsDrivechainIdentity::PARENT_REPLAY_VERSION == " ++ show mainnetReplayVersion ++ ";"] ++
+  concatMap checkpointAssertion [(betanetReplayVersion, betanetBootstrapHeight), (mainnetReplayVersion, mainnetBootstrapHeight)] ++
+  ["inline constexpr auto SLOTS = *SlotsForReplayVersion(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION);"]
+  where
+    checkpointAssertion (version,height) =
+      ["static_assert(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION != " ++ show version ++ " ||",
+       "ElementsDrivechainIdentity::PARENT_CHECKPOINT_HEIGHT == " ++ show height ++ ",",
+       "\"Empty bootstrap is valid only immediately before BIP300 activation\");"]
 
 -- Enum names are native type adapters; text is frozen protocol metadata.
 parentRuleCatalog :: [(Word32, [String], [String])]
@@ -345,7 +354,10 @@ parentRuleCatalog =
      "Elements Drivechain v11; parameterized controller profile; replay v4; annex v2; one M6 per parent block; withdrawal accumulator v1; BIP301 checkpoint v1; Simplicity active; slot 24"]),
    (betanetReplayVersion, ["TreasuryOpcode::NOP8", "DrivechainM6ReplayRule::SEQUENTIAL_M6", "DrivechainWithdrawalHistoryRule::ALLOW_REPROPOSAL"],
     ["ELEMENTS_BETANET_PARENT_REPLAY_BOOTSTRAP_V1", "ELEMENTS_SLOT24_SEQUENTIAL_M6_REPROPOSAL_V1",
-     "Elements Drivechain Betanet v1; parameterized controller profile; replay v5; annex v2; sequential M6; withdrawal accumulator v1; BIP301 checkpoint v1; Simplicity active; slot 24"])]
+     "Elements Drivechain Betanet v1; parameterized controller profile; replay v5; annex v2; sequential M6; withdrawal accumulator v1; BIP301 checkpoint v1; Simplicity active; slot 24"]),
+   (mainnetReplayVersion, ["TreasuryOpcode::NOP8", "DrivechainM6ReplayRule::SEQUENTIAL_M6", "DrivechainWithdrawalHistoryRule::ALLOW_REPROPOSAL"],
+    ["ELEMENTS_ECX_MAINNET_PARENT_REPLAY_BOOTSTRAP_V1", "ELEMENTS_SLOT24_SEQUENTIAL_M6_REPROPOSAL_V1",
+     "Elements native replay v6; ECX mainnet fork checkpoint; annex v2; sequential M6; Simplicity active; slot 24"])]
 
 -- Included after ParentRules is defined, within namespace drivechain.
 parentRulesHeader :: String
@@ -368,9 +380,10 @@ parentRulesHeader = unlines $
    "inline constexpr ParentRules FROZEN_PARENT_RULES = *ParentRulesForVersion(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION);",
    "static_assert(FROZEN_PARENT_RULES.local_rule_domain == ElementsDrivechainIdentity::BIP300301_LOCAL_RULE_DOMAIN,",
    "\"Frozen identity local rule domain disagrees with replay version\");",
-   "static_assert(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION != " ++ show betanetReplayVersion ++ " ||",
+   "static_assert((ElementsDrivechainIdentity::PARENT_REPLAY_VERSION != " ++ show betanetReplayVersion ++ " &&",
+   "ElementsDrivechainIdentity::PARENT_REPLAY_VERSION != " ++ show mainnetReplayVersion ++ ") ||",
    "ElementsDrivechainIdentity::SIDECHAIN_SLOT == " ++ show sidechainSlot ++ ",",
-   "\"Betanet frozen identity must select sidechain slot 24\");"]
+   "\"Beta and ECX mainnet identities must select sidechain slot 24\");"]
   where allowed field choices = "(" ++ intercalate " || " [field ++ " == " ++ choice | choice <- nub choices] ++ ")"
 
 -- BIP341 NUMS point H, followed by the frozen V18 staging-renderer domain.

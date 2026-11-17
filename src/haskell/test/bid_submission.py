@@ -27,6 +27,7 @@ def check(binary, directory, mode, expected_error):
     def constant(name):
         return re.search(r"\b" + name + r'\[\]\{\s*"([0-9a-f]{64})"', identity)[1]
 
+    checkpoint_height = int(re.search(r"\bPARENT_CHECKPOINT_HEIGHT\{(\d+)\}", identity)[1])
     parent_hash = "112233".zfill(64)
     network_hash = "0000000000000001441a6a4ae49d679d4a30581db3e3eaeeb2fba5da6dc146ed"
     calls, failures, broadcasts = [], [], []
@@ -48,9 +49,9 @@ def check(binary, directory, mode, expected_error):
             result, error = None, None
             if method == "getblockhash":
                 values = {0: constant("PARENT_GENESIS"), 973728: network_hash,
-                          967679: constant("PARENT_CHECKPOINT_HASH")}
+                          checkpoint_height: constant("PARENT_CHECKPOINT_HASH")}
                 result = values[params[0]]
-                if params[0] == {"genesis": 0, "network": 973728, "checkpoint": 967679}.get(mode):
+                if params[0] == {"genesis": 0, "network": 973728, "checkpoint": checkpoint_height}.get(mode):
                     result = "11" * 32
                 if mode == "network-error" and params == [973728]:
                     result, error = None, dict(code=-8, message="network fixture offline")

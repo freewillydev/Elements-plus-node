@@ -496,12 +496,12 @@ def genesis(identity_digest: bytes, header: Header) -> tuple[bytes, bytes]:
     return merkle_root, hash256(bytes(block_header))
 
 
-BETANET_BOOTSTRAP_DOMAIN = "ELEMENTS_BETANET_PARENT_REPLAY_BOOTSTRAP_V1"
+MAINNET_BOOTSTRAP_DOMAIN = "ELEMENTS_ECX_MAINNET_PARENT_REPLAY_BOOTSTRAP_V1"
 
 
-def betanet_bootstrap_commitment(header: Header) -> str:
+def mainnet_bootstrap_commitment(header: Header) -> str:
     """Empty BIP300 state immediately before activation; not an RPC attestation."""
-    writer = HashWriter().string(BETANET_BOOTSTRAP_DOMAIN)
+    writer = HashWriter().string(MAINNET_BOOTSTRAP_DOMAIN)
     writer.u32(header.integer("PARENT_CHECKPOINT_HEIGHT"))
     writer.uint256(header.string("PARENT_CHECKPOINT_HASH"))
     writer.uint256(header.string("PARENT_CHECKPOINT_CHAINWORK"))
@@ -512,11 +512,11 @@ def betanet_bootstrap_commitment(header: Header) -> str:
 def calculate_fresh(header: Header) -> IdentityResult:
     if header.boolean("BETANET_EXISTING_ELEMENTS_TEST_PROFILE"):
         raise ValueError("fresh chain cannot reuse the live Betanet proposal")
-    if header.string("DATA_DIR") != "elements-native-v1":
+    if header.string("DATA_DIR") != "elements-native-mainnet-v1":
         raise ValueError("fresh child data directory is required")
-    if header.string("P2P_MAGIC_DOMAIN") != "ecash-elements-native-slot24-p2p-v1":
+    if header.string("P2P_MAGIC_DOMAIN") != "ecash-elements-mainnet-native-slot24-p2p-v1":
         raise ValueError("fresh child P2P namespace is required")
-    if header.string("PARENT_CHECKPOINT_BOOTSTRAP_STATE_COMMITMENT") != betanet_bootstrap_commitment(header):
+    if header.string("PARENT_CHECKPOINT_BOOTSTRAP_STATE_COMMITMENT") != mainnet_bootstrap_commitment(header):
         raise ValueError("parent bootstrap commitment mismatch")
     zero_hash = "00" * 32
     preactivation_checkpoint_is_canonical = (
@@ -526,7 +526,8 @@ def calculate_fresh(header: Header) -> IdentityResult:
         and header.string("HISTORICAL_PROPOSAL_BLOCK_HASH") == zero_hash
         and header.integer("HISTORICAL_ACTIVATION_HEIGHT") == 0
         and header.string("HISTORICAL_ACTIVATION_BLOCK_HASH") == zero_hash
-        and header.integer("PARENT_CHECKPOINT_HEIGHT") == 967679
+        and header.integer("PARENT_REPLAY_VERSION") == 6
+        and header.integer("PARENT_CHECKPOINT_HEIGHT") == 973727
         and header.string("PARENT_CHECKPOINT_HASH") != header.string("PARENT_GENESIS")
         and header.string("PARENT_CHECKPOINT_CHAINWORK") != zero_hash
         and header.string("PARENT_CHECKPOINT_CTIP_TXID") == zero_hash

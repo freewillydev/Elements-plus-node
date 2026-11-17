@@ -1342,7 +1342,7 @@ static RPCHelpMan importdrivechaindeposit_native()
                     {"mainchain_txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The confirmed mainchain deposit transaction id."},
                     {"mainchain_vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The exact BIP300 deposit outpoint index."},
                     {"mainchain_block_hash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The mainchain block containing the BIP300 deposit event."},
-                    {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The Elements address committed by the BIP300 deposit."},
+                    {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The exact address committed by the BIP300 deposit. A bc1 address credits the equivalent Elements witness script."},
                     {"value_sats", RPCArg::Type::NUM, RPCArg::Optional::NO, "The exact deposit value in satoshis."},
                     {"fee_sats", RPCArg::Type::NUM, RPCArg::Default{0}, "Maximum optional fee sponsored by this wallet for an address-only deposit. Cannot be combined with deposit_fee_sats."},
                     {"deposit_fee_sats", RPCArg::Type::NUM, RPCArg::Default{0}, "Exact Elements fee committed in the L1 deposit destination, deducted from value_sats. Use getdrivechaindepositdestination before creating the L1 deposit. Cannot alter an existing deposit's fee."},
@@ -1389,8 +1389,16 @@ static RPCHelpMan importdrivechaindeposit_native()
     wallet::CheckDepositArgument(wallet::DepositArgument::BLOCK_HASH, IsHex(mainchain_block_hash_str), mainchain_block_hash_str.size() == 64);
 
     const std::string address = request.params[3].get_str();
-    const CTxDestination dest = DecodeDestination(address);
-    wallet::CheckDepositArgument(wallet::DepositArgument::ADDRESS, IsValidDestination(dest));
+    CTxDestination dest = DecodeDestination(address);
+    std::string credited_address = address;
+    if (!IsValidDestination(dest)) {
+        CScript recipient_script;
+        CAmount embedded_fee{0};
+        wallet::CheckDepositArgument(wallet::DepositArgument::ADDRESS,
+            DecodeDrivechainDepositDestination(address, recipient_script, embedded_fee) &&
+            embedded_fee == 0 && ExtractDestination(recipient_script, dest) && IsValidDestination(dest));
+        credited_address = EncodeDestination(dest);
+    }
 
     const int64_t value_sats = wallet::ParseDrivechainSatoshis(request.params[4],"value_sats");
     wallet::CheckDepositArgument(wallet::DepositArgument::NATIVE_VALUE, value_sats);
@@ -1493,7 +1501,7 @@ static RPCHelpMan importdrivechaindeposit_native()
         default: throw std::logic_error("invalid native deposit import action");
         }
     });
-    return FinishDrivechainDeposit(*pwallet, tx_ref, mainchain_txid, address, amount,
+    return FinishDrivechainDeposit(*pwallet, tx_ref, mainchain_txid, credited_address, amount,
         deposit_amount, fee_sats, std::pair{mainchain_vout, mainchain_block_hash});
 },
     };

@@ -34,6 +34,10 @@ identity alpha depth = D.ConfirmationIdentity (C.pack "elements") True True (Jus
   (pin "PEGIN_PARENT_GENESIS")
   (pin (if alpha then "PEGIN_ALPHA_MANIFEST" else "PEGIN_BETA_MANIFEST")) depth
 
+mainnetIdentity :: Word32 -> D.ConfirmationIdentity
+mainnetIdentity depth = D.ConfirmationIdentity (C.pack "elements") True True (Just 24)
+  (pin "PEGIN_MAINNET_GENESIS") (pin "PEGIN_PARENT_GENESIS") (pin "PEGIN_MAINNET_MANIFEST") depth
+
 encode :: D.ConfirmationSelection -> B.ByteString
 encode (D.ConfirmationSelection _ height (D.ConfirmationIdentity network elementsMode parent slot genesis parentGenesis manifest depth)) =
   wordLE 8 (fromIntegral height) <> size (B.length network) <> network <>
@@ -48,19 +52,19 @@ encode (D.ConfirmationSelection _ height (D.ConfirmationIdentity network element
 reference :: D.ConfirmationSelection -> Word32
 reference (D.ConfirmationSelection alpha height value@(D.ConfirmationIdentity _ _ _ _ _ _ _ configured))
   | alpha = if value == identity True 100 then 1 else 0
-  | value == identity False 100 = 6
+  | value == identity False 100 || value == mainnetIdentity 100 = 6
   | height >= 64 && value == identity True 100 = 1
   | otherwise = configured
 
 genSelection :: Gen D.ConfirmationSelection
 genSelection = do
-  historical <- arbitrary
+  profile <- elements [identity True,identity False,mainnetIdentity]
   alpha <- arbitrary
   height <- frequency [(3,elements [minBound,-1,0,63,64,65,maxBound]),(1,arbitrary)]
   depth <- frequency [(3,elements [0,1,6,99,100,101,maxBound]),(1,arbitrary)]
   mask <- choose (0,511 :: Word32)
   network <- elements [C.pack "elementsregtest",B.empty,B.replicate 253 101,B.pack [101,0,108]]
-  let D.ConfirmationIdentity normal _ _ _ genesis parentGenesis manifest _ = identity historical 100
+  let D.ConfirmationIdentity normal _ _ _ genesis parentGenesis manifest _ = profile 100
       unknown = B.replicate 32 1
       value = D.ConfirmationIdentity (if testBit mask 0 then network else normal)
         (not (testBit mask 1)) (not (testBit mask 2))
@@ -99,9 +103,9 @@ workflow = forAll genSelection $ \value@(D.ConfirmationSelection alpha _ _) -> i
 
 boundaries :: Property
 boundaries = once $ conjoin
-  [let value = D.ConfirmationSelection alpha height (identity historical depth)
+  [let value = D.ConfirmationSelection alpha height (profile depth)
    in validate value === fromIntegral (reference value)
-  | alpha <- [False,True], historical <- [False,True],
+  | alpha <- [False,True], profile <- [identity True,identity False,mainnetIdentity],
     height <- [minBound,-1,0,63,64,65,maxBound], depth <- [0,1,6,99,100,101,maxBound]]
 
 malformed :: Property
@@ -134,7 +138,7 @@ lazyMismatch = once $ property $ isNothing $ interpret
 properties :: [(String,Property)]
 properties = [("confirmation identity / copied fields and independent predicate",selection),
   ("confirmation identity / selected depth publication",workflow),
-  ("confirmation identity / exact Alpha Beta and depth boundaries",boundaries),
+  ("confirmation identity / exact Alpha, Beta and mainnet depth boundaries",boundaries),
   ("confirmation identity / malformed snapshots never publish",malformed),
   ("confirmation identity / native exceptions and publication framing",faults),
   ("confirmation identity / payload equality before DSL",lazyMismatch)]

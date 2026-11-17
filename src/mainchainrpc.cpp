@@ -3178,8 +3178,7 @@ struct NativeCacheInitialization {
     bool force_rebuild;
     const Consensus::Params& consensus{Params().GetConsensus()};
     uint256 active_genesis, store_identity, expected_bootstrap_commitment, ctip_hash;
-    std::optional<Bitcoin::CBlock> checkpoint_block, genesis_block;
-    std::optional<VerifiedMainchainHeader> checkpoint_header;
+    std::optional<Bitcoin::CBlock> genesis_block;
     NativeReplayIdentity identity{consensus, {}, {}};
     struct CachedTip {
         std::optional<DrivechainParentReplayTip> tip;
@@ -3227,11 +3226,22 @@ struct NativeCacheInitialization {
         case 3:
             if (!ReadActiveMainchainHash(0, active_genesis, error)) return {0};
             return ParentReplayBytes(true, active_genesis);
-        case 4:
-            checkpoint_block.emplace();
-            checkpoint_header.emplace();
-            if (!ReadVerifiedMainchainBlock(consensus.drivechain_parent_state_hash, 1, *checkpoint_block, *checkpoint_header, error)) return {0};
-            return ParentReplayBytes(true, checkpoint_header->height, checkpoint_header->chainwork);
+        case 4: {
+            VerifiedMainchainHeader verified;
+            if constexpr (ElementsDrivechainBootstrap::CHECKPOINT_HEADER_ONLY) {
+                // BIP300 has no state in the checkpoint block on ECX mainnet.
+                // Authenticate the fork, active header, and work before seeding.
+                const DrivechainParentHeaderSource header{
+                    []() -> const uint256& { return Params().ParentGenesisBlockHash(); },
+                    {}, {}, {}, {}, DrivechainParentDeadlineAction, true};
+                if (!VerifyDrivechainNetworkHeader(consensus, g_drivechain_parent_replay_published_epoch,
+                    consensus.drivechain_parent_state_hash, 1, verified, error, header)) return {0};
+            } else {
+                Bitcoin::CBlock block;
+                if (!ReadVerifiedMainchainBlock(consensus.drivechain_parent_state_hash, 1, block, verified, error)) return {0};
+            }
+            return ParentReplayBytes(true, verified.height, verified.chainwork);
+        }
         case 5: SetError(error, std::string(input.begin(), input.end())); return {};
         case 10: return ParentReplayBytes(Action(static_cast<uint32_t>(argument)));
         case 11: return ParentReplayBytes(consensus.drivechain_parent_state_height,

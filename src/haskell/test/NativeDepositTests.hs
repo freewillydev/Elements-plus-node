@@ -70,6 +70,22 @@ invalidFees = once $ ioProperty $ conjoin <$> mapM (\fee -> do
   ["0","00","01","+1","-1"," 1","1 ","1.0","1e2","",
    "2100000000000001","9223372036854775808",replicate 200 '9',"1\NUL"]
 
+parentAddress :: Property
+parentAddress = once $ ioProperty $ do
+  let address = C.pack "bc1qurmk3qux4f8l95g0cakjuj0nc4pe9nmt25w6lr"
+      run mode bytes = capture (-1) [] $ \native ->
+        recipient mode 0 bytes $ \step index input -> do
+          reply <- native step index input
+          pure $ if step == 2 && index /= 2 then wordLE 8 0 else reply
+  decoded <- run 0 address
+  encoded <- run 1 address
+  otherNetwork <- run 0 (C.pack "tb1qexample")
+  pure $ conjoin
+    [ decoded === (0,[(1,0,B.empty),(2,0,address),(2,2,address),(3,0,wordLE 8 0)])
+    , encoded === (0,[(2,1,B.empty),(2,2,address),(4,0,address)])
+    , otherNetwork === (1,[(1,0,B.empty),(2,0,C.pack "tb1qexample")])
+    ]
+
 construction :: Property
 construction = forAll (elements [0,1,100,bound-1]) $ \fee -> ioProperty $ do
   let payload = if fee == 0 then C.pack "address" else C.pack ("dcfee1:" ++ show fee ++ ":address")
@@ -177,6 +193,7 @@ properties :: [(String,Property)]
 properties =
   [("native deposit / canonical recipient round trip and effects",codec),
    ("native deposit / noncanonical fees",invalidFees),
+   ("native deposit / bc1 fallback preserves commitment bytes",parentAddress),
    ("native deposit / ordered assembly and amount admission",construction),
    ("native deposit / assembly callback failures",faults),
    ("native deposit / malformed replies",malformed),

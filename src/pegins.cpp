@@ -560,7 +560,13 @@ struct DepositDestinationAdapter {
         switch (step) {
         case 1: recipient.clear(); fee = 0; return {};
         case 2: {
-            destination = DecodeDestination(index == 1 ? std::string(original) : std::string(input.begin(),input.end()));
+            const std::string address = index == 1 ? std::string(original) : std::string(input.begin(),input.end());
+            if (index == 2) {
+                std::string error;
+                destination = DecodeParentDestination(address, error);
+            } else {
+                destination = DecodeDestination(address);
+            }
             std::vector<unsigned char> bytes(8);
             WriteLE64(bytes.data(),IsValidDestination(destination));
             return bytes;

@@ -26,6 +26,8 @@ BOOST_AUTO_TEST_CASE(bootstrap_generated_catalog_matches_original_fields)
     constexpr auto actual = ElementsDrivechainBootstrap::SlotsForReplayVersion(4);
     static_assert(actual && actual->size() == 7);
     static_assert(ElementsDrivechainBootstrap::SlotsForReplayVersion(5)->data() == nullptr);
+    static_assert(ElementsDrivechainBootstrap::SlotsForReplayVersion(6)->data() == nullptr);
+    static_assert(ElementsDrivechainBootstrap::CHECKPOINT_HEADER_ONLY);
     BOOST_REQUIRE_EQUAL(actual->size(), expected.size());
     for (size_t i = 0; i < expected.size(); ++i) {
         BOOST_CHECK_EQUAL((*actual)[i].slot, expected[i].slot);
@@ -36,7 +38,7 @@ BOOST_AUTO_TEST_CASE(bootstrap_generated_catalog_matches_original_fields)
     }
     for (uint32_t version = 0; version <= 1024; ++version) {
         const auto slots = ElementsDrivechainBootstrap::SlotsForReplayVersion(version);
-        BOOST_CHECK_EQUAL(slots.has_value(), version == 4 || version == 5);
+        BOOST_CHECK_EQUAL(slots.has_value(), version == 4 || version == 5 || version == 6);
     }
 }
 
@@ -49,7 +51,7 @@ BOOST_AUTO_TEST_CASE(bootstrap_slots_do_not_cross_networks)
     BOOST_CHECK_EQUAL(legacy->size(), 7);
     BOOST_CHECK(beta->empty());
     for (const auto& slot : *legacy) BOOST_CHECK(slot.slot != 24);
-    for (const uint32_t version : {0U, 3U, 6U, 0xffffffffU}) {
+    for (const uint32_t version : {0U, 3U, 7U, 0xffffffffU}) {
         BOOST_CHECK(!ElementsDrivechainBootstrap::SlotsForReplayVersion(version));
     }
 }
@@ -58,8 +60,10 @@ BOOST_AUTO_TEST_CASE(parent_rules_are_versioned_and_fail_closed)
 {
     const auto legacy = drivechain::ParentRulesForVersion(4);
     const auto beta = drivechain::ParentRulesForVersion(5);
+    const auto mainnet = drivechain::ParentRulesForVersion(6);
     BOOST_REQUIRE(legacy);
     BOOST_REQUIRE(beta);
+    BOOST_REQUIRE(mainnet);
     BOOST_CHECK(legacy->treasury_opcode == drivechain::TreasuryOpcode::NOP5);
     BOOST_CHECK(legacy->m6 == DrivechainM6ReplayRule::SINGLE_CONFIGURED_SLOT_M6);
     BOOST_CHECK(legacy->history == DrivechainWithdrawalHistoryRule::UNIQUE_M6ID);
@@ -68,11 +72,15 @@ BOOST_AUTO_TEST_CASE(parent_rules_are_versioned_and_fail_closed)
     BOOST_CHECK(beta->history == DrivechainWithdrawalHistoryRule::ALLOW_REPROPOSAL);
     BOOST_CHECK(legacy->bootstrap_domain == "ELEMENTS_ALPHANET_PARENT_REPLAY_BOOTSTRAP_V1");
     BOOST_CHECK(beta->bootstrap_domain == "ELEMENTS_BETANET_PARENT_REPLAY_BOOTSTRAP_V1");
+    BOOST_CHECK(mainnet->bootstrap_domain == "ELEMENTS_ECX_MAINNET_PARENT_REPLAY_BOOTSTRAP_V1");
+    BOOST_CHECK(mainnet->treasury_opcode == beta->treasury_opcode);
+    BOOST_CHECK(mainnet->m6 == beta->m6);
+    BOOST_CHECK(mainnet->history == beta->history);
     BOOST_CHECK(legacy->local_rule_domain == "ELEMENTS_SLOT24_SINGLE_M6_PER_PARENT_BLOCK_V1");
     BOOST_CHECK(beta->local_rule_domain == "ELEMENTS_SLOT24_SEQUENTIAL_M6_REPROPOSAL_V1");
     BOOST_CHECK(legacy->proposal_text == "Elements Drivechain v11; parameterized controller profile; replay v4; annex v2; one M6 per parent block; withdrawal accumulator v1; BIP301 checkpoint v1; Simplicity active; slot 24");
     BOOST_CHECK(beta->proposal_text == "Elements Drivechain Betanet v1; parameterized controller profile; replay v5; annex v2; sequential M6; withdrawal accumulator v1; BIP301 checkpoint v1; Simplicity active; slot 24");
-    for (const uint32_t version : {0U, 1U, 2U, 3U, 6U, 255U, 0xffffffffU}) {
+    for (const uint32_t version : {0U, 1U, 2U, 3U, 7U, 255U, 0xffffffffU}) {
         BOOST_CHECK(!drivechain::ParentRulesForVersion(version));
     }
     const auto frozen = drivechain::ParentRulesForVersion(ElementsDrivechainIdentity::PARENT_REPLAY_VERSION);

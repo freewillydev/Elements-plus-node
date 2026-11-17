@@ -10,16 +10,16 @@ It requires a new matching parent proposal; no activation is implied.
 | --- | --- |
 | Chain | `elements` |
 | Slot | `24` |
-| Chain data subdirectory | `elements-native-v1` |
+| Chain data subdirectory | `elements-native-mainnet-v1` |
 | Elements RPC port | `7071` |
 | Elements P2P port | `7072` |
 | Parent RPC port | `28532` |
-| Parent checkpoint height | `967679` |
-| Parent checkpoint hash | `00000000000000000001b58cb69869f6067f0ecb3f2fe0f2263e62ba1ccb0c41` |
+| Parent checkpoint height | `973727` |
+| Parent checkpoint hash | `0000000000000000000132b722697381ee70f3c565ed8c2168ef68d54e3b4f04` |
 | Parent genesis (shared ancestry, not fork identification) | `000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f` |
-| Elements genesis | `fe05f7c76cfb50ef4f5594c761df25581e95a9946a64bc9d8f567235ffa485c9` |
-| Pegged asset | `2e69819685c22252a706f69ce67ab9ab36a633b91e61f6ee69216d6e1c7e90d3` |
-| Required fresh parent proposal hash | `a9980eaa8bb6893d4baea100f484000b4f72e4640fc0d9f3ebf8a2f29ae63460` |
+| Elements genesis | `96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc` |
+| Pegged asset | `3ed19bb316d05817997992a9e36d3d94289c8f2cb7b86fb620405807964d231f` |
+| Required fresh parent proposal hash | `eb411361c94149bf1b37dc147b17eb87307807c9607ac0a9c85ced151ff90ade` |
 | Canonical address HRP | `elements` |
 | Canonical confidential address HRP | `elementsl` |
 

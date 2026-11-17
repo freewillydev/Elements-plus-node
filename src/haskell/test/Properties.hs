@@ -761,20 +761,22 @@ parentRuleCatalog = forAll (frequency [(3,elements [0,3,4,5,6,maxBound]),(1,arbi
   let rows = Constants.parentRuleCatalog
       selected = lookup version [(v,(enums,texts)) | (v,enums,texts) <- rows]
   in conjoin [Constants.betanetReplayVersion === 5,
-       map (\(v,_,_) -> v) rows === [4,5],
+       Constants.mainnetReplayVersion === 6,
+       map (\(v,_,_) -> v) rows === [4,5,6],
        [take 2 enums | (_,enums,_) <- rows] ===
          [["TreasuryOpcode::NOP5", "DrivechainM6ReplayRule::SINGLE_CONFIGURED_SLOT_M6"],
+          ["TreasuryOpcode::NOP8", "DrivechainM6ReplayRule::SEQUENTIAL_M6"],
           ["TreasuryOpcode::NOP8", "DrivechainM6ReplayRule::SEQUENTIAL_M6"]],
        property (all (\(_,enums,texts) -> length enums == 3 && length texts == 3) rows),
-       property (case selected of Nothing -> version /= 4 && version /= 5; Just _ -> version == 4 || version == 5)]
+       property (case selected of Nothing -> version `notElem` [4,5,6]; Just _ -> version `elem` [4,5,6])]
 
 parentBootstrapCatalog :: Property
 parentBootstrapCatalog = forAll (frequency [(3,elements [0,3,4,5,6,maxBound]),(1,arbitrary)]) $ \version ->
   let actual = Constants.bootstrapSlots version
       ids = fmap (map (\(slot,_,_,_,_) -> slot)) actual
-      expected = case version of 4 -> Just [2,4,9,13,98,99,255]; 5 -> Just []; _ -> Nothing
-  in conjoin [ids === expected, Constants.emptyBootstrapVersion === 5,
-       Constants.emptyBootstrapHeight === 967679,
+      expected = case version of 4 -> Just [2,4,9,13,98,99,255]; 5 -> Just []; 6 -> Just []; _ -> Nothing
+  in conjoin [ids === expected, Constants.betanetBootstrapHeight === 967679,
+       Constants.mainnetBootstrapHeight === 973727,
        property (maybe True (all (\(_,active,txid,_,_) -> length active == 64 && length txid == 64)) actual)]
 
 parentLifecyclePlans :: Property

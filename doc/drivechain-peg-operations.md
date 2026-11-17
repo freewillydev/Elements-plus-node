@@ -1,13 +1,15 @@
 # Native slot-24 deposits and withdrawals
 
-This guide applies to the production `-chain=elements` mainnet identity. Use a fresh `elements-native-v1` chain data directory. Do not
+This guide applies to the production `-chain=elements` mainnet identity. Use a fresh `elements-native-mainnet-v1` chain data directory. Do not
 point the current binary at a preserved historical chain.
 
 ## Identity and transport
 
 The frozen identity in `src/elements_drivechain_identity.h` specifies slot 24,
 the mainnet parent profile with an empty signet challenge and parent
-checkpoint 967679 (`00000000000000000001b58cb69869f6067f0ecb3f2fe0f2263e62ba1ccb0c41`).
+checkpoint 973727 (`0000000000000000000132b722697381ee70f3c565ed8c2168ef68d54e3b4f04`).
+Elements authenticates that checkpoint's header and chainwork. It seeds empty
+BIP300 state there and reads block bodies starting at ECX activation height 973728.
 The [generated identity table](drivechain-network-identity.md) records the exact
 genesis, asset, proposal and ports from that header.
 The parent identity is frozen. Sharing Bitcoin's genesis and address

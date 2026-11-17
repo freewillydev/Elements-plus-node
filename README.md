@@ -13,7 +13,7 @@ The previous complete implementation is preserved on
 ## Production Identity
 
 This branch uses a **production identity targeting mainnet**. Its data
-subdirectory is `elements-native-v1`, with P2P port 7072 and RPC port 7071. Never reuse another chain's databases or wallets.
+subdirectory is `elements-native-mainnet-v1`, with P2P port 7072 and RPC port 7071. Never reuse another chain's databases or wallets.
 The frozen identity is in `src/elements_drivechain_identity.h`; its independent
 serializer is `contrib/devtools/elements_identity_refreeze.py`.
 

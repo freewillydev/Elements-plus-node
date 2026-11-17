@@ -6943,7 +6943,7 @@ BOOST_AUTO_TEST_CASE(elements_chain_has_frozen_drivechain_identity)
     const auto base_params = CreateBaseChainParams(CBaseChainParams::ELEMENTS);
 
     BOOST_CHECK_EQUAL(params->NetworkIDString(), "elements");
-    BOOST_CHECK_EQUAL(base_params->DataDir(), "elements-native-v1");
+    BOOST_CHECK_EQUAL(base_params->DataDir(), "elements-native-mainnet-v1");
     BOOST_CHECK_EQUAL(base_params->RPCPort(), 7071);
     BOOST_CHECK_EQUAL(base_params->MainchainRPCPort(), 28532);
     BOOST_CHECK_EQUAL(base_params->OnionServiceTargetPort(), 37072);
@@ -6966,25 +6966,25 @@ BOOST_AUTO_TEST_CASE(elements_chain_has_frozen_drivechain_identity)
     BOOST_CHECK(consensus.signblockscript == CScript() << OP_TRUE);
     BOOST_CHECK_EQUAL(
         params->HashGenesisBlock(),
-        uint256S("fe05f7c76cfb50ef4f5594c761df25581e95a9946a64bc9d8f567235ffa485c9"));
+        uint256S("96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc"));
     BOOST_CHECK_EQUAL(
         params->GenesisBlock().hashMerkleRoot,
-        uint256S("d5a55d8261a4baaceca67e2c6b21bdeb4f3d56d579d05c188516be02b96b90d6"));
+        uint256S("d192694c3ee58da558cbb3db1d708d5411730cd962dfe846b83786915cd5d96f"));
     BOOST_CHECK_EQUAL(
         consensus.pegged_asset.GetHex(),
-        "2e69819685c22252a706f69ce67ab9ab36a633b91e61f6ee69216d6e1c7e90d3");
+        "3ed19bb316d05817997992a9e36d3d94289c8f2cb7b86fb620405807964d231f");
     BOOST_CHECK_EQUAL(params->GenesisBlock().nTime, 1784334600U);
     BOOST_CHECK(params->HashGenesisBlock() != params->ParentGenesisBlockHash());
     BOOST_CHECK(consensus.subsidy_asset == consensus.pegged_asset);
 
     BOOST_CHECK_EQUAL(
         consensus.drivechain_protocol_manifest_hash,
-        uint256S("94831880cee118fe5266ebf3945528b370b1a0f668fb76cf2c3ca756b8d1068c"));
+        uint256S("d993519f7e1d5a1b09d98a9d3a246711266186bc482ad518771023b66ba9cda0"));
     BOOST_CHECK(!ElementsDrivechainIdentity::BETANET_EXISTING_ELEMENTS_TEST_PROFILE);
     BOOST_REQUIRE(consensus.drivechain_proposal_hash.has_value());
     BOOST_CHECK_EQUAL(
         *consensus.drivechain_proposal_hash,
-        uint256S("a9980eaa8bb6893d4baea100f484000b4f72e4640fc0d9f3ebf8a2f29ae63460"));
+        uint256S("eb411361c94149bf1b37dc147b17eb87307807c9607ac0a9c85ced151ff90ade"));
     BOOST_REQUIRE(consensus.drivechain_parent_state_active_proposal_hash.has_value());
     BOOST_CHECK_EQUAL(
         *consensus.drivechain_parent_state_active_proposal_hash,
@@ -6997,13 +6997,13 @@ BOOST_AUTO_TEST_CASE(elements_chain_has_frozen_drivechain_identity)
     BOOST_CHECK_EQUAL(
         consensus.drivechain_parent_state_activation_block_hash,
         uint256S("0000000000000000000000000000000000000000000000000000000000000000"));
-    BOOST_CHECK_EQUAL(consensus.drivechain_parent_state_height, 967679U);
+    BOOST_CHECK_EQUAL(consensus.drivechain_parent_state_height, 973727U);
     BOOST_CHECK_EQUAL(
         consensus.drivechain_parent_state_hash,
-        uint256S("00000000000000000001b58cb69869f6067f0ecb3f2fe0f2263e62ba1ccb0c41"));
+        uint256S("0000000000000000000132b722697381ee70f3c565ed8c2168ef68d54e3b4f04"));
     BOOST_CHECK_EQUAL(
         consensus.drivechain_parent_state_chainwork,
-        uint256S("000000000000000000000000000000000000000148a384d49682843d3c74a5a0"));
+        uint256S("000000000000000000000000000000000000000153ffcf078069d421d26612a0"));
     BOOST_CHECK_EQUAL(
         consensus.drivechain_parent_state_ctip_txid,
         uint256S("0000000000000000000000000000000000000000000000000000000000000000"));
@@ -7015,7 +7015,7 @@ BOOST_AUTO_TEST_CASE(elements_chain_has_frozen_drivechain_identity)
     BOOST_CHECK_EQUAL(consensus.drivechain_used_slot_activation_threshold, 13150U);
     BOOST_CHECK_EQUAL(consensus.drivechain_withdrawal_bundle_max_age, 26300U);
     BOOST_CHECK_EQUAL(consensus.drivechain_withdrawal_bundle_inclusion_threshold, 13150U);
-    BOOST_CHECK_EQUAL(consensus.drivechain_parent_state_replay_version, 5U);
+    BOOST_CHECK_EQUAL(consensus.drivechain_parent_state_replay_version, 6U);
     BOOST_CHECK_EQUAL(consensus.drivechain_annex_feature_version, 2U);
     BOOST_CHECK(consensus.drivechain_m6_withdrawal_validation);
 
@@ -7025,7 +7025,7 @@ BOOST_AUTO_TEST_CASE(elements_chain_has_frozen_drivechain_identity)
     BOOST_CHECK_EQUAL(params->Bech32HRP(), "elements");
     BOOST_CHECK_EQUAL(params->Blech32HRP(), "elementsl");
     BOOST_CHECK_EQUAL(params->ParentBech32HRP(), "bc");
-    BOOST_CHECK_EQUAL(HexStr(params->MessageStart()), "97b20d51");
+    BOOST_CHECK_EQUAL(HexStr(params->MessageStart()), "0d5dc8ca");
     BOOST_CHECK_EQUAL(MAX_BLOCK_WEIGHT, 4'000'000U);
     BOOST_CHECK_EQUAL(MAX_BLOCK_SERIALIZED_SIZE, 4'000'000U);
     BOOST_CHECK_EQUAL(HexStr(params->Base58Prefix(CChainParams::SECRET_KEY)), "37");
@@ -7051,7 +7051,7 @@ public:
     }
 };
 
-BOOST_AUTO_TEST_CASE(betanet_pegin_requires_six_confirmations_without_changing_identity)
+BOOST_AUTO_TEST_CASE(mainnet_pegin_requires_six_confirmations_without_changing_identity)
 {
     ArgsManager args;
     // An ordinary configuration override cannot reduce the frozen depth.
@@ -7060,7 +7060,7 @@ BOOST_AUTO_TEST_CASE(betanet_pegin_requires_six_confirmations_without_changing_i
     BOOST_CHECK(!HasAlphaPeginOneConfirmationUpgrade(*beta));
     BOOST_CHECK_EQUAL(beta->GetConsensus().pegin_min_depth, 100U);
     BOOST_CHECK_EQUAL(beta->GetConsensus().hashGenesisBlock.GetHex(),
-        "fe05f7c76cfb50ef4f5594c761df25581e95a9946a64bc9d8f567235ffa485c9");
+        "96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc");
     for (const int height : {-1, 0, 63, 64, 65, std::numeric_limits<int>::max()}) {
         const auto depth = GetDrivechainPeginConfirmationDepth(*beta, height);
         BOOST_CHECK_EQUAL(depth, 6U);

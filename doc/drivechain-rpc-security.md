@@ -1,6 +1,6 @@
 # Secure native Drivechain RPC setup
 
-The current network is `-chain=elements`, data subdirectory `elements-native-v1`,
+The current network is `-chain=elements`, data subdirectory `elements-native-mainnet-v1`,
 the production identity targeting mainnet slot 24. It requires its own proposal activation.
 See the [generated identity table](drivechain-network-identity.md) and
 [identity and peg operations](drivechain-peg-operations.md).
@@ -119,9 +119,9 @@ data directory):
 
 ```ini
 drivechainbmmgrpcaddr=127.0.0.1:55051
-drivechainbmmgrpcca=/absolute/path/to/elements-native-v1/enforcer-tls/ca.pem
-drivechainbmmgrpccert=/absolute/path/to/elements-native-v1/enforcer-tls/elements-client.pem
-drivechainbmmgrpckey=/absolute/path/to/elements-native-v1/enforcer-tls/elements-client-key.pem
+drivechainbmmgrpcca=/absolute/path/to/elements-native-mainnet-v1/enforcer-tls/ca.pem
+drivechainbmmgrpccert=/absolute/path/to/elements-native-mainnet-v1/enforcer-tls/elements-client.pem
+drivechainbmmgrpckey=/absolute/path/to/elements-native-mainnet-v1/enforcer-tls/elements-client-key.pem
 drivechainbmmgrpcauthority=enforcer.local
 ```
 

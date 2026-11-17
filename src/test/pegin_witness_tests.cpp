@@ -2841,7 +2841,7 @@ BOOST_AUTO_TEST_CASE(parent_replay_bootstrap_preimage_matches_original_serializa
             consensus.drivechain_parent_state_chainwork = uint256S("b2");
             const std::span<const ElementsDrivechainBootstrap::Slot> slots(fixtures.data(), count);
             HashWriter original, migrated;
-            original << std::string{"ELEMENTS_BETANET_PARENT_REPLAY_BOOTSTRAP_V1"}
+            original << std::string{"ELEMENTS_ECX_MAINNET_PARENT_REPLAY_BOOTSTRAP_V1"}
                      << consensus.drivechain_parent_state_height
                      << consensus.drivechain_parent_state_hash
                      << consensus.drivechain_parent_state_chainwork
@@ -6424,3 +6424,43 @@ BOOST_AUTO_TEST_CASE(drivechain_parent_withdrawal_replay_requires_approved_m6)
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+struct NativeDepositRecipientSetup : BasicTestingSetup {
+    NativeDepositRecipientSetup() : BasicTestingSetup(ChainType::ELEMENTS) {}
+};
+
+BOOST_FIXTURE_TEST_CASE(native_deposit_bc1_recipient, NativeDepositRecipientSetup)
+{
+    const std::string address{"bc1qurmk3qux4f8l95g0cakjuj0nc4pe9nmt25w6lr"};
+    const std::string elements_address{"elements1qurmk3qux4f8l95g0cakjuj0nc4pe9nmt0gx7kp"};
+    BOOST_CHECK(!IsValidDestinationString(address));
+    BOOST_REQUIRE(IsValidDestinationString(elements_address));
+    const CScript expected = GetScriptForDestination(DecodeDestination(elements_address));
+    BOOST_CHECK_EQUAL(HexStr(expected), "0014e0f7688386aa4ff2d10fc76d2e49f3c54392cf6b");
+    for (const CAmount fee : {CAmount{0}, CAmount{1000}}) {
+        const std::string payload = fee == 0 ? address : "dcfee1:1000:" + address;
+        BOOST_CHECK_EQUAL(EncodeDrivechainDepositDestination(address, fee), payload);
+        CScript recipient;
+        CAmount decoded_fee{-1};
+        BOOST_REQUIRE(DecodeDrivechainDepositDestination(payload, recipient, decoded_fee));
+        BOOST_CHECK(recipient == expected);
+        BOOST_CHECK_EQUAL(decoded_fee, fee);
+
+        const DrivechainMintableDeposit deposit{Bitcoin::COutPoint(uint256S("dd"), 0),
+            uint256S("ee"), 1, 100000, {payload.begin(), payload.end()}};
+        const auto tx = CreateNativeDrivechainDeposit(deposit);
+        BOOST_REQUIRE(tx);
+        BOOST_CHECK(tx->vout[0].scriptPubKey == expected);
+        BOOST_CHECK_EQUAL(tx->vout[0].nValue.GetAmount(), deposit.value - fee);
+        const auto& commitment = tx->witness.vtxinwit[0].m_pegin_witness.stack.at(7);
+        BOOST_CHECK_EQUAL(std::string(commitment.begin(), commitment.end()), payload);
+        std::string error;
+        BOOST_CHECK(CheckDrivechainDepositOutputs(*tx, 0, error));
+        CMutableTransaction redirected{*tx};
+        redirected.vout[0].scriptPubKey = CScript() << OP_TRUE;
+        BOOST_CHECK(!CheckDrivechainDepositOutputs(CTransaction{redirected}, 0, error));
+    }
+    CScript recipient;
+    CAmount fee{0};
+    BOOST_CHECK(!DecodeDrivechainDepositDestination(address.substr(0, address.size() - 1) + "q", recipient, fee));
+}

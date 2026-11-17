@@ -13,6 +13,7 @@ import Control.Operation.Validation (validate)
 import Data.Bits ((.&.), (.|.), shiftL, shiftR, testBit)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
+import Data.Char (toLower)
 import Data.Int (Int32, Int64)
 import Data.Word (Word8, Word32, Word64)
 import Foreign.Marshal.Alloc (alloca)
@@ -47,6 +48,17 @@ class RecipientEncoding op where
 class NativeAssembly op where
   assembleNative :: op -> Int64 -> Check ()
 
+-- Keep the original commitment bytes. For bc1 only, ask the native Bech32
+-- decoder for the parent witness program and use its script on Elements.
+validRecipient :: NativeBytes -> Word64 -> B.ByteString -> IO B.ByteString -> Check Bool
+validRecipient native index input original = do
+  valid <- liftIO (native 2 index input >>= D.constructionWord) >>= D.constructionFlag
+  if valid then pure True else do
+    address <- liftIO original
+    if C.map toLower (B.take 3 address) == C.pack "bc1"
+      then liftIO (native 2 2 address >>= D.constructionWord) >>= D.constructionFlag
+      else pure False
+
 instance RecipientDecoding Recipient where
   decodeRecipient (Recipient maximumMoney _ size source native) = do
     liftIO (D.constructionEffect native 1 B.empty)
@@ -54,7 +66,7 @@ instance RecipientDecoding Recipient where
     payload <- liftIO source
     unless (fromIntegral (B.length payload) == size) (throwE (-1))
     (address,fee) <- maybe (throwE 1) pure (destination maximumMoney payload)
-    valid <- liftIO (native 2 0 address >>= D.constructionWord) >>= D.constructionFlag
+    valid <- validRecipient native 0 address (pure address)
     unless valid (throwE 1)
     liftIO (D.constructionEffect native 3 (wordLE 8 (fromIntegral fee)))
     pure fee
@@ -63,7 +75,7 @@ instance RecipientEncoding Recipient where
   encodeRecipient (Recipient maximumMoney fee size source native) = do
     -- Encoding historically decodes the original address before checking fees
     -- and length. Index 1 asks the native decoder to use that borrowed string.
-    valid <- liftIO (native 2 1 B.empty >>= D.constructionWord) >>= D.constructionFlag
+    valid <- validRecipient native 1 B.empty source
     unless (valid && fee >= 0 && fee <= maximumMoney) (throwE 1)
     let prefix = if fee == 0 then B.empty else C.pack ("dcfee1:" ++ show fee ++ ":")
     unless (toInteger size + toInteger (B.length prefix) <= toInteger depositAddressLimit) (throwE 2)

@@ -126,8 +126,9 @@ instance Validation ConfirmationSelection where
         5 -> matches parentGenesis "PEGIN_PARENT_GENESIS"
         6 -> matches manifest "PEGIN_ALPHA_MANIFEST"
         7 -> configured == peginIdentityDepth
-        8 -> matches genesis "PEGIN_BETA_GENESIS"
-        9 -> matches manifest "PEGIN_BETA_MANIFEST"
+        8 -> matches genesis "PEGIN_BETA_GENESIS" || matches genesis "PEGIN_MAINNET_GENESIS"
+        9 -> (matches genesis "PEGIN_BETA_GENESIS" && matches manifest "PEGIN_BETA_MANIFEST") ||
+             (matches genesis "PEGIN_MAINNET_GENESIS" && matches manifest "PEGIN_MAINNET_MANIFEST")
         _ -> error "unknown confirmation identity fact"
 
 selectedConfirmationDepth :: Bool -> NativeBytes -> Word32 -> ExceptT Int32 IO Word32
