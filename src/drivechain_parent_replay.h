@@ -24,6 +24,20 @@ class CDBWrapper;
 using DrivechainReplayEffects = std::function<std::vector<unsigned char>(
     uint32_t, uint64_t, std::span<const unsigned char>)>;
 
+// Effective parent rules are separate from the threshold values in the immutable
+// child genesis. Explicit test and custom replay still take their own parameters.
+struct DrivechainParentReplayThresholds {
+    uint16_t unused_proposal_max_age;
+    uint16_t unused_activation_threshold;
+    uint16_t used_proposal_max_age;
+    uint16_t used_activation_threshold;
+    uint16_t withdrawal_bundle_max_age;
+    uint16_t withdrawal_bundle_inclusion_threshold;
+    bool ecx_mainnet_upgrade;
+};
+
+DrivechainParentReplayThresholds GetDrivechainParentReplayThresholds(const Consensus::Params& consensus);
+
 // The session owns replay temporaries; referenced block/state/output objects
 // must outlive it. Parameters and completion use effects 20480 and 20481.
 DrivechainReplayEffects MakeDrivechainParentBlockEffects(

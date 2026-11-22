@@ -201,7 +201,7 @@ static void CheckParentBlock()
 {
     using Call = std::pair<uint32_t,uint64_t>;
     const std::vector<Call> expected{{30,1},{30,7},{201,0},{0,0},{1,0},{2,0},{3,0},{10,0},{20,0},
-        {5096,0},{4136,0},{8192,0},{8193,24},{13288,0},{17384,0},{16394,0},{16395,0},
+        {5096,0},{4136,0},{8192,0},{8193,24},{13288,0},{13298,0},{17384,0},{16394,0},{16395,0},
         {16396,0},{16397,0},{16405,0},{16411,0}};
     for (int failure = -1; failure < static_cast<int>(expected.size()); ++failure) {
         std::vector<Call> seen;
@@ -230,6 +230,7 @@ static void CheckParentBlock()
                     case 20: return words({1});
                     case 8192: return std::vector<unsigned char>{24,0};
                     case 13288: return words({1,0,MAX_MONEY});
+                    case 13298: return words({1});
                     case 17384: return words({12});
                     case 16394: return std::vector<unsigned char>{42,0,43,1};
                     case 16395: Require(input.size() == 1 && input[0] == 42); break;

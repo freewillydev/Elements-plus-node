@@ -54,6 +54,8 @@ blockReply accepted step index = case step of
   8192 -> B.pack [24,0]
   8193 -> B.empty
   13288 -> B.concat (map (wordLE 8) [1,0,1000])
+  13297 -> B.empty
+  13298 -> wordLE 8 1
   17384 -> wordLE 8 0
   16394 -> B.empty
   16395 -> B.empty

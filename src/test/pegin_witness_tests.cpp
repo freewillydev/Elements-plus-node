@@ -6423,6 +6423,143 @@ BOOST_AUTO_TEST_CASE(drivechain_parent_withdrawal_replay_requires_approved_m6)
     BOOST_CHECK_EQUAL(cross_slot.pending_withdrawals.front().votes, 2U);
 }
 
+
+BOOST_AUTO_TEST_CASE(ecx_parallel_treasuries_consolidate_within_parent_block)
+{
+    constexpr uint8_t slot{24};
+    const uint256 proposal = uint256::ONE;
+    const auto treasury = [](uint8_t number) {
+        return CScript() << OP_NOP8 << std::vector<unsigned char>{number} << OP_TRUE;
+    };
+    const Bitcoin::COutPoint old(uint256S("1111111111111111111111111111111111111111111111111111111111111111"), 0);
+    const auto initial = [&]() {
+        DrivechainParentReplayState state;
+        state.active_proposal_hash = proposal;
+        state.required_proposal_activated = true;
+        state.required_activation_height = 1;
+        state.ctip = old;
+        state.ctip_value = 5000;
+        return state;
+    };
+    const auto deposit = [&](CAmount amount, uint32_t nonce) {
+        Bitcoin::CMutableTransaction tx;
+        tx.nLockTime = nonce;
+        tx.vin.emplace_back(Bitcoin::COutPoint(uint256::ONE, nonce));
+        tx.vout.emplace_back(amount, treasury(slot));
+        tx.vout.emplace_back(0, CScript() << OP_RETURN << std::vector<unsigned char>{'d'});
+        return tx;
+    };
+    const auto join = [&](std::vector<Bitcoin::COutPoint> inputs, CAmount amount) {
+        Bitcoin::CMutableTransaction tx;
+        for (const auto& input : inputs) tx.vin.emplace_back(input);
+        tx.vout.emplace_back(amount, treasury(slot));
+        return tx;
+    };
+    const auto outpoint = [](const Bitcoin::CMutableTransaction& tx) {
+        return Bitcoin::COutPoint(tx.GetHash(), 0);
+    };
+    std::string error;
+    std::vector<DrivechainMintableDeposit> deposits;
+    const auto apply = [&](DrivechainParentReplayState& state,
+                           std::vector<Bitcoin::CMutableTransaction> transactions) {
+        Bitcoin::CMutableTransaction coinbase;
+        coinbase.vin.emplace_back(Bitcoin::COutPoint(), CScript() << OP_0);
+        Bitcoin::CBlock block;
+        block.vtx.push_back(Bitcoin::MakeTransactionRef(coinbase));
+        for (auto& tx : transactions) block.vtx.push_back(Bitcoin::MakeTransactionRef(std::move(tx)));
+        deposits.clear();
+        error.clear();
+        return ApplyDrivechainParentBlockState(block, 981006, slot, proposal,
+            10, 5, 10, 5, 10, 5, state, &deposits, &error, nullptr, nullptr,
+            drivechain::TreasuryOpcode::NOP8, DrivechainM6ReplayRule::SEQUENTIAL_M6);
+    };
+
+    auto empty = initial();
+    BOOST_REQUIRE_MESSAGE(apply(empty, {}), error);
+    BOOST_CHECK(empty.ctip == old);
+
+    const auto first = deposit(1000, 1);
+    const auto second = deposit(2000, 2);
+    const auto merged = join({outpoint(first), outpoint(second)}, 3000);
+    const auto consolidated = join({old, outpoint(merged)}, 8000);
+    auto state = initial();
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, second, merged, consolidated}), error);
+    BOOST_CHECK(state.ctip == outpoint(consolidated));
+    BOOST_CHECK_EQUAL(state.ctip_value, 8000);
+    BOOST_REQUIRE_EQUAL(deposits.size(), 2U);
+    BOOST_CHECK(deposits[0].outpoint == outpoint(first));
+    BOOST_CHECK(deposits[1].outpoint == outpoint(second));
+    BOOST_CHECK_EQUAL(deposits[0].value + deposits[1].value, 3000);
+
+    // Persisted state contains the final consolidated output only. Replaying
+    // from the pre-block state reproduces it without retaining temporary outputs.
+    DataStream encoded;
+    encoded << state;
+    DrivechainParentReplayState restored;
+    encoded >> restored;
+    BOOST_CHECK(restored.ctip == state.ctip);
+    BOOST_CHECK_EQUAL(restored.ctip_value, state.ctip_value);
+    state = initial();
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, second, merged, consolidated}), error);
+
+    state = initial();
+    BOOST_CHECK(!apply(state, {first}));
+    BOOST_CHECK_EQUAL(error, "parent block leaves unconsolidated treasury outputs");
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({outpoint(first)}, 900)}));
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first), outpoint(first)}, 7000)}));
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first)}, 6001)}));
+    // A positive net increase requires a following deposit address.
+    BOOST_CHECK_EQUAL(error, "positive CTIP replacement for slot 24 has no following address");
+    state = initial();
+    state.ctip_value = MAX_MONEY;
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first)}, MAX_MONEY)}));
+    BOOST_CHECK_EQUAL(error, "parent treasury input total is outside the money range");
+
+    // M6 may consolidate a pending deposit too, but every input must belong to
+    // this treasury and the approved blinded withdrawal must use the full total.
+    auto withdrawal = join({old, outpoint(first)}, 5500);
+    withdrawal.vout.emplace_back(500, CScript() << OP_TRUE);
+    Bitcoin::CMutableTransaction blinded(withdrawal);
+    blinded.vin.clear();
+    blinded.vout[0] = Bitcoin::CTxOut(0, CScript() << OP_RETURN << std::vector<unsigned char>(8, 0));
+    state = initial();
+    state.pending_withdrawals.push_back({blinded.GetHash(), 981005, 6});
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, withdrawal}), error);
+    BOOST_CHECK_EQUAL(state.ctip_value, 5500);
+    BOOST_CHECK(state.ctip == outpoint(withdrawal));
+    BOOST_CHECK(state.pending_withdrawals.empty());
+    state = initial();
+    state.pending_withdrawals.push_back({blinded.GetHash(), 981005, 6});
+    withdrawal.vin.emplace_back(Bitcoin::COutPoint(uint256::ONE, 99));
+    BOOST_CHECK(!apply(state, {first, withdrawal}));
+
+    // Exact transaction bytes from ECX mainchain block 981006, hash
+    // 00000000000000000b4b6f13271a4c05baf6abaa1962d9aa1e6148b23ee1416b.
+    // This fixture tests treasury replay; parent header authentication is tested
+    // independently by the parent-context tests.
+    Bitcoin::CMutableTransaction live_deposit, live_consolidation;
+    DataStream deposit_bytes{ParseHex("02000000000101a5e43bec17d65b1d34efa6ea72c7888f4c3870f72db32a1a5e53f21943ba41400000000000fdffffff0340420f000000000004b701095100000000000000001e6a1c33756975326859797a50316e4e774e794c4846637a3947466e536a595bf61ac32200000016001469a8f8522678a3efa1d6db604625402b13db5e740247304402207a99ca82f3c27cc37131f94c680ae750ef02a0d135b01e65567345662c3d186b02204239da1aea4121abc27c6a46b0a6fe60a2227073842bed7fdca152a00f2079e90121024c1534899106493f3751e39cce891b71ec1b404eda38fdd9b3905722f89a959cfe64cd1d")};
+    deposit_bytes >> TX_WITH_WITNESS(live_deposit);
+    DataStream consolidation_bytes{ParseHex("02000000025c8ad756e5e442e45aaa1884794965f1bcefd47444851d1e30d8c2b0961bacd80000000000ffffffff7b3c08270264841e7a867a7530d3ef2ff5f40a9e9004a3336f0b8a1585de12ce0000000000ffffffff0180841e000000000004b701095100000000")};
+    consolidation_bytes >> TX_WITH_WITNESS(live_consolidation);
+    BOOST_CHECK_EQUAL(live_deposit.GetHash().GetHex(), "ce12de85158a0b6f33a304909e0af4f52fefd330757a867a1e84640227083c7b");
+    BOOST_CHECK_EQUAL(live_consolidation.GetHash().GetHex(), "4d5201220987e149825df3ac23ed505290bef39d2e249e82b6fcd2c4da4e2ffe");
+    state = initial();
+    auto& nine = state.other_slots[9];
+    nine.active_proposal_hash = proposal;
+    nine.ctip = Bitcoin::COutPoint(uint256S("d8ac1b96b0c2d8301e1d854474d4efbcf16549798418aa5ae442e4e556d78a5c"), 0);
+    nine.ctip_value = 1000000;
+    BOOST_REQUIRE_MESSAGE(apply(state, {live_deposit, live_consolidation}), error);
+    BOOST_CHECK_EQUAL(state.other_slots.at(9).ctip_value, 2000000);
+    BOOST_CHECK(state.other_slots.at(9).ctip == outpoint(live_consolidation));
+    BOOST_CHECK(state.ctip == old);
+    BOOST_CHECK_EQUAL(state.ctip_value, 5000);
+    BOOST_CHECK(deposits.empty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 struct NativeDepositRecipientSetup : BasicTestingSetup {
@@ -6464,3 +6601,177 @@ BOOST_FIXTURE_TEST_CASE(native_deposit_bc1_recipient, NativeDepositRecipientSetu
     CAmount fee{0};
     BOOST_CHECK(!DecodeDrivechainDepositDestination(address.substr(0, address.size() - 1) + "q", recipient, fee));
 }
+
+BOOST_FIXTURE_TEST_SUITE(ecx_mainnet_replay_tests, NativeDepositRecipientSetup)
+
+static bool ReplayMainnetBlock(const Bitcoin::CBlock& block, uint32_t height,
+    DrivechainParentReplayState& state, std::string& error)
+{
+    const auto& consensus = Params().GetConsensus();
+    const auto rules = GetDrivechainParentReplayThresholds(consensus);
+    error.clear();
+    return ApplyDrivechainParentBlockState(block, height, *consensus.drivechain_slot,
+        *consensus.drivechain_proposal_hash, rules.unused_proposal_max_age, rules.unused_activation_threshold,
+        rules.used_proposal_max_age, rules.used_activation_threshold, rules.withdrawal_bundle_max_age,
+        rules.withdrawal_bundle_inclusion_threshold, state, nullptr, &error, nullptr, nullptr,
+        drivechain::TreasuryOpcode::NOP8, DrivechainM6ReplayRule::SEQUENTIAL_M6);
+}
+
+BOOST_AUTO_TEST_CASE(mainnet_replay_identity_and_frozen_child)
+{
+    const auto& consensus = Params().GetConsensus();
+    BOOST_CHECK_EQUAL(Params().HashGenesisBlock().GetHex(), "96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc");
+    BOOST_REQUIRE(consensus.drivechain_proposal_hash);
+    BOOST_CHECK_EQUAL(consensus.drivechain_proposal_hash->GetHex(), "eb411361c94149bf1b37dc147b17eb87307807c9607ac0a9c85ced151ff90ade");
+    BOOST_CHECK_EQUAL(consensus.pegged_asset.GetHex(), "3ed19bb316d05817997992a9e36d3d94289c8f2cb7b86fb620405807964d231f");
+    const auto rules = GetDrivechainParentReplayThresholds(consensus);
+    BOOST_REQUIRE(rules.ecx_mainnet_upgrade);
+    BOOST_CHECK_EQUAL(rules.unused_proposal_max_age, 2016U);
+    BOOST_CHECK_EQUAL(rules.unused_activation_threshold, 1815U);
+    BOOST_CHECK_EQUAL(rules.used_proposal_max_age, 12096U);
+    BOOST_CHECK_EQUAL(rules.used_activation_threshold, 6048U);
+    BOOST_CHECK_EQUAL(rules.withdrawal_bundle_max_age, 12096U);
+    BOOST_CHECK_EQUAL(rules.withdrawal_bundle_inclusion_threshold, 6048U);
+
+    const auto previous_id = pegin_witness_tests::OriginalReplayStoreIdentity(consensus);
+    const auto current_id = DrivechainParentReplayStoreIdentity(consensus);
+    BOOST_REQUIRE_EQUAL(previous_id.GetHex(), "8a4c708a927e7dfe5bc140bfa0ec3f3d8bf9d28c91d7d4a22907fe696bfb84d3");
+    BOOST_REQUIRE(current_id != previous_id);
+    DrivechainParentReplayTip old_tip, loaded;
+    old_tip.height = 983699;
+    old_tip.hash = uint256S("000000000000000008cc29d63f16b9c2ee50d839979d4efe42f0ab479b10b068");
+    DrivechainParentReplayStore store(m_args.GetDataDirBase() / "legacy_parent_replay", 1 << 20, true,
+        DrivechainWithdrawalHistoryRule::ALLOW_REPROPOSAL);
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(store.Reset(previous_id, old_tip, &error), error);
+    BOOST_REQUIRE(store.Load(previous_id, loaded, &error) == DrivechainReplayStoreLoadStatus::LOADED);
+    BOOST_CHECK(store.Load(current_id, loaded, &error) == DrivechainReplayStoreLoadStatus::IDENTITY_MISMATCH);
+
+    auto synthetic = consensus;
+    synthetic.hashGenesisBlock = uint256S("01");
+    const auto custom = GetDrivechainParentReplayThresholds(synthetic);
+    BOOST_CHECK(!custom.ecx_mainnet_upgrade);
+    BOOST_CHECK_EQUAL(custom.unused_proposal_max_age, 2016U);
+    BOOST_CHECK_EQUAL(custom.unused_activation_threshold, 1008U);
+    BOOST_CHECK_EQUAL(custom.used_proposal_max_age, 26300U);
+    BOOST_CHECK_EQUAL(custom.used_activation_threshold, 13150U);
+    BOOST_CHECK_EQUAL(custom.withdrawal_bundle_max_age, 26300U);
+    BOOST_CHECK_EQUAL(custom.withdrawal_bundle_inclusion_threshold, 13150U);
+    BOOST_CHECK(DrivechainParentReplayStoreIdentity(synthetic) == pegin_witness_tests::OriginalReplayStoreIdentity(synthetic));
+}
+
+BOOST_AUTO_TEST_CASE(mainnet_coinbase_983700_and_shuttle_activation)
+{
+    // The archived ECX coinbase at height 983700, including its four M2 ACKs and five-entry M4.
+    DataStream bytes{ParseHex(
+        "020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff230394020f"
+        "0d2f6563706f6f6c2e746563682f0468d2f405cb84f48ebe5b054ca4240600ffffffff090000000000000000276a25d6"
+        "e1c5df5801af367cc4f25fd0600be8a5baadbb4ac894415d5c8835a19edf2d1f511aaede0000000000000000276a25d6"
+        "e1c5df62f572eede93145b139194250c4c157830a4dbfa92645fe4e066846d61e33d8efe0000000000000000276a25d6"
+        "e1c5df2f0631e356eedc13cf07c6e18c71a0a134a063d49cc8f894932dac19de51390db80000000000000000276a25d6"
+        "e1c5df08ace2b58529d77ff79f08e283d9e035affb7134e95a15092f7728cc1694b64d7400000000000000000c6a0ad7"
+        "7d17760100ffffffff0000000000000000276a25d161736809bf278793726c6850f44c59fa9d34c780da5028c19f4b7d"
+        "63dcd454c1b3b9a4374d147112000000001600148730c92343b6e8ca01d5fd893c852d462a7a16e70bb02f0000000000"
+        "22512067318f5630e9a2f722112d366b3b35c9373bba45c9f91bd95d8d49ca7119d2440000000000000000266a24aa21"
+        "a9ed0a86060bf640a5031aa3c65da3ba5170ccadd4d8b69c2d0d87409bffc1d534730120000000000000000000000000"
+        "000000000000000000000000000000000000000000000000")};
+    Bitcoin::CMutableTransaction coinbase;
+    bytes >> TX_WITH_WITNESS(coinbase);
+    BOOST_REQUIRE(bytes.empty());
+    BOOST_REQUIRE_EQUAL(coinbase.GetHash().GetHex(), "c7b0e7fd202a38cfac8cc04736e12a9389798374ba8b05f401d412c0ae9c4dcf");
+
+    // The five active slots, pending M2 proposals and voted bundle at the preceding height.
+    DrivechainParentReplayState previous;
+    previous.active_proposal_hash = uint256S("cf249fa80988e337733bbe46f72b0f3a6da8e6d8af3560f93df1bba2cb08f2ae");
+    previous.other_slots[9].active_proposal_hash = uint256S("a8245c1792ffebe9bbe82da6f74e6501e5412ba1ab1d7d5b5a866ea3977d1884");
+    previous.other_slots[46].active_proposal_hash = uint256S("96086d56cfdde2f0092c9eefcc6277fdb5f0193889b79d444343f59a03f5b145");
+    previous.other_slots[130].active_proposal_hash = uint256S("06af0a266771877b48da143abcd702c3e343d11d72b38de0e109ae55fcffffff");
+    previous.other_slots[131].active_proposal_hash = uint256S("596532a20528ec082ac85d365662344bf418c2f0fea4f81414dcfa2fffffffff");
+    const auto bundle = uint256S("c6647f9a6e76721f8412cb49934401e20b6b917dea9df537b1d5809f628f6a90");
+    const auto shuttle = uint256S("b80d3951de19ac2d9394f8c89cd463a034a1a0718ce1c607cf13dcee56e33106");
+    previous.other_slots[9].pending_withdrawals = {{bundle, 983348, 209}};
+    previous.other_slots[47].pending_proposals[shuttle] = {982691, 1008};
+    previous.other_slots[8].pending_proposals[uint256S("744db69416cc28772f09155ae93471fbaf35e0d983e2089ff77fd72985b5e2ac")] = {983201, 498};
+    previous.other_slots[88].pending_proposals[uint256S("deae1a511f2ddf9ea135885c5d4194c84abbadbaa5e80b60d05ff2c47c36af01")] = {982723, 976};
+    previous.other_slots[98].pending_proposals[uint256S("fe8e3de3616d8466e0e45f6492fadba43078154c0c259491135b1493deee72f5")] = {983261, 438};
+
+    auto state = previous;
+    Bitcoin::CBlock block;
+    block.vtx = {Bitcoin::MakeTransactionRef(coinbase)};
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 983700, state, error), error);
+    BOOST_CHECK(state.other_slots.at(47).active_proposal_hash.IsNull());
+    BOOST_CHECK_EQUAL(state.other_slots.at(47).pending_proposals.at(shuttle).votes, 1009U);
+    BOOST_CHECK_EQUAL(state.other_slots.at(9).pending_withdrawals.at(0).votes, 210U);
+    BOOST_CHECK(state.previous_m4_actions.at(9).m6id == bundle);
+
+    for (const unsigned width : {4U, 6U}) {
+        auto malformed = coinbase;
+        auto payload = ParseHex("d77d17760100");
+        payload.insert(payload.end(), width - 1, 0xff);
+        malformed.vout.at(4).scriptPubKey = CScript() << OP_RETURN << payload;
+        block.vtx = {Bitcoin::MakeTransactionRef(malformed)};
+        auto rejected = previous;
+        BOOST_CHECK(!ReplayMainnetBlock(block, 983700, rejected, error));
+        BOOST_CHECK_EQUAL(error, strprintf("M4 vote vector has %u entries for 5 active sidechains", width));
+    }
+
+    // Isolate the final two Shuttle ACKs. The archived activation height is 984508.
+    coinbase.vout = {coinbase.vout.at(2)};
+    block.vtx = {Bitcoin::MakeTransactionRef(coinbase)};
+    DrivechainParentReplayState crossing;
+    crossing.other_slots[47].pending_proposals[shuttle] = {982691, 1814};
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 984507, crossing, error), error);
+    BOOST_CHECK(crossing.other_slots.at(47).active_proposal_hash.IsNull());
+    BOOST_CHECK_EQUAL(crossing.other_slots.at(47).pending_proposals.at(shuttle).votes, 1815U);
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 984508, crossing, error), error);
+    BOOST_CHECK(crossing.other_slots.at(47).active_proposal_hash == shuttle);
+
+    // Replacing an already active slot requires more than 6048 ACKs.
+    DrivechainParentReplayState replacement;
+    replacement.other_slots[47].active_proposal_hash = uint256S("aa");
+    replacement.other_slots[47].pending_proposals[shuttle] = {1, 6047};
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 6049, replacement, error), error);
+    BOOST_CHECK(replacement.other_slots.at(47).active_proposal_hash == uint256S("aa"));
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 6050, replacement, error), error);
+    BOOST_CHECK(replacement.other_slots.at(47).active_proposal_hash == shuttle);
+}
+
+BOOST_AUTO_TEST_CASE(mainnet_withdrawal_approval_and_expiry)
+{
+    DrivechainParentReplayState initial;
+    initial.active_proposal_hash = *Params().GetConsensus().drivechain_proposal_hash;
+    initial.required_proposal_activated = true;
+    initial.required_activation_height = 1;
+    initial.required_activation_block_hash = uint256S("77");
+    initial.ctip = Bitcoin::COutPoint(uint256S("44"), 0);
+    initial.ctip_value = 5000;
+    Bitcoin::CMutableTransaction withdrawal;
+    withdrawal.vin.emplace_back(*initial.ctip);
+    withdrawal.vout.emplace_back(4000, CScript() << OP_NOP8 << std::vector<unsigned char>{24} << OP_TRUE);
+    withdrawal.vout.emplace_back(900, CScript() << OP_TRUE);
+    uint256 bundle;
+    std::string error;
+    BOOST_REQUIRE_MESSAGE(ComputeDrivechainM6Id(Bitcoin::CTransaction{withdrawal}, 5000, bundle, nullptr, &error,
+        drivechain::TreasuryOpcode::NOP8), error);
+    Bitcoin::CMutableTransaction coinbase;
+    coinbase.vin.emplace_back(Bitcoin::COutPoint(), CScript() << OP_0);
+    Bitcoin::CBlock block;
+    block.vtx = {Bitcoin::MakeTransactionRef(coinbase), Bitcoin::MakeTransactionRef(withdrawal)};
+
+    initial.pending_withdrawals = {{bundle, 1, 6048}};
+    auto exact_threshold = initial;
+    BOOST_CHECK(!ReplayMainnetBlock(block, 12097, exact_threshold, error));
+    BOOST_CHECK_EQUAL(error, strprintf("BIP300 M6 %s has 6048 votes, requiring more than 6048", bundle.GetHex()));
+
+    initial.pending_withdrawals.front().votes = 6049;
+    auto last_block = initial;
+    BOOST_REQUIRE_MESSAGE(ReplayMainnetBlock(block, 12097, last_block, error), error);
+    BOOST_CHECK_EQUAL(last_block.ctip_value, 4000);
+    BOOST_CHECK(last_block.pending_withdrawals.empty());
+    auto expired = initial;
+    BOOST_CHECK(!ReplayMainnetBlock(block, 12098, expired, error));
+    BOOST_CHECK_EQUAL(error, strprintf("BIP300 M6 %s was never proposed for slot 24", bundle.GetHex()));
+}
+
+BOOST_AUTO_TEST_SUITE_END()

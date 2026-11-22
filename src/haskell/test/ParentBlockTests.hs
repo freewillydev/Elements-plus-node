@@ -263,6 +263,9 @@ blockFixture messages transactions failure overrides = do
             (3,1000) -> pure (B.concat (map (wordLE 8) [fromIntegral transactions+1,0,1000]))
             (3,1001) -> pure (wordLE 8 1 <> wordLE 8 1 <> B.pack [24,0])
             (3,1002) -> pure B.empty
+            (3,1008) -> pure B.empty
+            (3,1009) -> pure B.empty
+            (3,1010) -> pure (wordLE 8 1)
             (3,1003) -> pure B.empty
             (3,202) -> pure (wordLE 8 0)
             (3,0) -> pure (wordLE 8 0)
@@ -307,6 +310,7 @@ blockMalformed = once $ ioProperty $ do
         ((12288+1001,1),B.replicate 15 0),
         ((12288+1001,1),wordLE 8 1 <> wordLE 8 1 <> B.pack [24,2]),
         ((12288+1002,0),B.singleton 0),
+        ((12288+1009,0),B.singleton 0),((12288+1010,0),B.singleton 0),
         ((16384+1000,0),wordLE 8 16),((16384+10,0),B.pack [42,64]),
         ((16384+11,0),B.singleton 0),((16384+12,0),B.singleton 0),
         ((16384+21,0),B.pack [0,0]),((201,0),B.singleton 0)]
@@ -321,8 +325,10 @@ blockRejections = once $ ioProperty $ do
   inactive <- blockFixture 1 1 (-1) [((4096,0),B.pack [3,2])]
   future <- blockFixture 1 1 (-1) [((8193,24),wordLE 4 101 <> wordLE 4 0)]
   replaced <- blockFixture 1 1 (-1) [((16384+1000,0),wordLE 8 13)]
+  pending <- blockFixture 1 1 (-1) [((12288+1010,0),wordLE 8 0)]
   pure $ conjoin [fst inactive === 1,last (snd inactive) === (5097,0x201,B.empty),
     fst future === 1,last (snd future) === (9192,0x118,B.empty),
+    fst pending === 1,last (snd pending) === (13296,0x801,B.empty),
     fst replaced === 1,last (snd replaced) ===
       (200,0,C.pack "parent slot no longer has the required active proposal")]
 
@@ -350,9 +356,11 @@ blockTreasury = forAll ((,,) <$> arbitrary <*> arbitrary <*> elements [0xb4,0xb7
             1006 -> pure B.empty
             1007 -> word 1
             1008 -> pure B.empty
+            1009 -> pure B.empty
+            1010 -> word 1
             0 -> word $ case index of
               0 -> 1; 1 -> 1; 2 -> 1; 3 -> if withdrawal then 1 else 0
-              4 -> 100; 5 -> value; 6 -> 0; 7 -> 3; _ -> error "unexpected treasury fact"
+              4 -> 100; 5 -> value; 6 -> 0; 7 -> 3; 8 -> 1; 9 -> 1; _ -> error "unexpected treasury fact"
             102 -> word 100
             304 -> word value
             503 -> word 100

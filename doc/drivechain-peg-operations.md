@@ -3,6 +3,32 @@
 This guide applies to the production `-chain=elements` mainnet identity. Use a fresh `elements-native-mainnet-v1` chain data directory. Do not
 point the current binary at a preserved historical chain.
 
+## ECX mainnet parent replay upgrade
+
+The production child keeps its genesis, pegged asset and required slot-24
+proposal. Upgraded validators replay ECX from the authenticated checkpoint at
+height 973727 using the mainnet voting rules. The original child identity
+continues to serialize its historical parameters. Other child profiles keep
+their own rules.
+
+| Parent decision | Maximum age in blocks | Votes required |
+| --- | ---: | ---: |
+| Activate an unused slot | 2,016 | 1,816 |
+| Replace an occupied slot | 12,096 | 6,049 |
+| Approve a withdrawal bundle | 12,096 | 6,049 |
+
+The enforcer uses strict comparisons with thresholds of 1,815 and 6,048.
+At ECX height 983700, slot 47 had just received its 1,009th acknowledgement.
+The five-entry M4 matched the five active slots then. Slot 47 activated at
+984508. The upgraded node still rejects explicit votes of the wrong length.
+[ECX mainnet enforcer rules](https://github.com/LayerTwo-Labs/bip300301_enforcer/blob/v1.0.1/lib/types.rs)
+
+Allow the upgraded node to build fresh derived parent history from the
+checkpoint. Keep the old replay store for rollback. Every validating peer
+must adopt the upgrade to agree on post-checkpoint parent history. Slot-24
+deposit and mining eligibility still require the exact proposal committed
+by the child.
+
 ## Identity and transport
 
 The frozen identity in `src/elements_drivechain_identity.h` specifies slot 24,
