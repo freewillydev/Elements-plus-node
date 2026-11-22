@@ -52,6 +52,32 @@
 
 namespace Bitcoin = Sidechain::Bitcoin;
 
+DrivechainParentReplayThresholds GetDrivechainParentReplayThresholds(const Consensus::Params& consensus)
+{
+    // ECX mainnet launched with bip300301_enforcer v1.0.1. The original Elements
+    // genesis committed Betanet's thresholds. Identify that exact deployment
+    // before correcting its replay from the pre-fork checkpoint at 973727.
+    static const uint256 genesis = uint256S("96ea493b3d0b6431c1dc4b6819cd41d5349dd6b73f1f0996202bd95edf399dfc");
+    static const uint256 manifest = uint256S("d993519f7e1d5a1b09d98a9d3a246711266186bc482ad518771023b66ba9cda0");
+    static const uint256 proposal = uint256S("eb411361c94149bf1b37dc147b17eb87307807c9607ac0a9c85ced151ff90ade");
+    static const CAsset asset{uint256S("3ed19bb316d05817997992a9e36d3d94289c8f2cb7b86fb620405807964d231f")};
+    static const uint256 checkpoint = uint256S("0000000000000000000132b722697381ee70f3c565ed8c2168ef68d54e3b4f04");
+    static const uint256 work = uint256S("000000000000000000000000000000000000000153ffcf078069d421d26612a0");
+    if (consensus.hashGenesisBlock == genesis && consensus.pegged_asset == asset &&
+        consensus.drivechain_protocol_manifest_hash == manifest && consensus.drivechain_proposal_hash == proposal &&
+        consensus.drivechain_slot == 24 && consensus.drivechain_parent_state_height == 973727 &&
+        consensus.drivechain_parent_state_hash == checkpoint && consensus.drivechain_parent_state_chainwork == work &&
+        consensus.drivechain_parent_state_replay_version == 6 && consensus.drivechain_m6_withdrawal_validation &&
+        consensus.drivechain_unused_slot_proposal_max_age == 2016 && consensus.drivechain_unused_slot_activation_threshold == 1008 &&
+        consensus.drivechain_used_slot_proposal_max_age == 26300 && consensus.drivechain_used_slot_activation_threshold == 13150 &&
+        consensus.drivechain_withdrawal_bundle_max_age == 26300 && consensus.drivechain_withdrawal_bundle_inclusion_threshold == 13150) {
+        return {2016, 1815, 12096, 6048, 12096, 6048, true};
+    }
+    return {consensus.drivechain_unused_slot_proposal_max_age, consensus.drivechain_unused_slot_activation_threshold,
+            consensus.drivechain_used_slot_proposal_max_age, consensus.drivechain_used_slot_activation_threshold,
+            consensus.drivechain_withdrawal_bundle_max_age, consensus.drivechain_withdrawal_bundle_inclusion_threshold, false};
+}
+
 namespace {
 
 /**
@@ -1972,12 +1998,13 @@ struct DrivechainParentReplayCache {
 template <typename... Fields>
 std::vector<unsigned char> ParentCacheKeyBytes(const Consensus::Params& consensus, const Fields&... fields)
 {
+    const auto thresholds = GetDrivechainParentReplayThresholds(consensus);
     return ParentReplayBytes(consensus.drivechain_slot.has_value(), consensus.drivechain_slot.value_or(0),
         consensus.drivechain_proposal_hash.has_value(), consensus.drivechain_proposal_hash.value_or(uint256{}),
         consensus.drivechain_parent_state_active_proposal_hash.value_or(uint256{}), consensus.drivechain_parent_state_hash,
-        consensus.drivechain_unused_slot_proposal_max_age, consensus.drivechain_unused_slot_activation_threshold,
-        consensus.drivechain_used_slot_proposal_max_age, consensus.drivechain_used_slot_activation_threshold,
-        consensus.drivechain_withdrawal_bundle_max_age, consensus.drivechain_withdrawal_bundle_inclusion_threshold,
+        thresholds.unused_proposal_max_age, thresholds.unused_activation_threshold,
+        thresholds.used_proposal_max_age, thresholds.used_activation_threshold,
+        thresholds.withdrawal_bundle_max_age, thresholds.withdrawal_bundle_inclusion_threshold,
         consensus.drivechain_parent_state_replay_version, fields...);
 }
 
@@ -2843,8 +2870,9 @@ DrivechainDepositStatus GetConfirmedDrivechainDepositStatus(
             const auto& slot = Params().GetConsensus().drivechain_slot;
             return ParentReplayBytes(slot.has_value(), slot.value_or(0), int32_t{sidechain_slot}, value, uint64_t{address.size()});
         }
-        case 2:
+        case 2: {
             config = &Params().GetConsensus();
+            const auto thresholds = GetDrivechainParentReplayThresholds(*config);
             return ParentReplayBytes(config->drivechain_proposal_hash.has_value(), config->drivechain_proposal_hash.value_or(uint256{}),
                 config->drivechain_protocol_manifest_hash, config->drivechain_parent_state_hash, config->drivechain_parent_state_chainwork,
                 config->drivechain_parent_state_active_proposal_description, config->drivechain_parent_state_active_proposal_hash.value_or(uint256{}),
@@ -2852,11 +2880,12 @@ DrivechainDepositStatus GetConfirmedDrivechainDepositStatus(
                 config->drivechain_parent_state_activation_height, config->drivechain_parent_state_activation_block_hash,
                 config->drivechain_parent_state_height, config->drivechain_parent_state_ctip_txid,
                 config->drivechain_parent_state_ctip_vout, config->drivechain_parent_state_ctip_value,
-                config->drivechain_unused_slot_proposal_max_age, config->drivechain_unused_slot_activation_threshold,
-                config->drivechain_used_slot_proposal_max_age, config->drivechain_used_slot_activation_threshold,
-                config->drivechain_withdrawal_bundle_max_age, config->drivechain_withdrawal_bundle_inclusion_threshold,
+                thresholds.unused_proposal_max_age, thresholds.unused_activation_threshold,
+                thresholds.used_proposal_max_age, thresholds.used_activation_threshold,
+                thresholds.withdrawal_bundle_max_age, thresholds.withdrawal_bundle_inclusion_threshold,
                 config->drivechain_m6_withdrawal_validation, config->drivechain_parent_state_replay_version,
                 uint32_t{ElementsDrivechainIdentity::PARENT_REPLAY_VERSION});
+        }
         case 3: return ParentReplayBytes(Hash(config->drivechain_parent_state_active_proposal_description));
         case 4: if (error) error->assign(input.begin(),input.end()); return {};
         default: throw std::logic_error("invalid deposit admission action");
@@ -3134,6 +3163,7 @@ struct NativeReplayIdentity {
     const Consensus::Params& consensus;
     std::optional<HashWriter> writer;
     uint256 identity;
+    const DrivechainParentReplayThresholds thresholds{GetDrivechainParentReplayThresholds(consensus)};
 
     uint32_t operator()(uint32_t step)
     {
@@ -3141,7 +3171,10 @@ struct NativeReplayIdentity {
         case 1: assert(consensus.drivechain_slot.has_value()); return 1;
         case 2: assert(consensus.drivechain_proposal_hash.has_value()); return 1;
         case 3: writer.emplace(); return 1;
-        case 4: *writer << std::string{drivechain::PARENT_REPLAY_STORE_DOMAIN}; return 1;
+        case 4:
+            *writer << std::string{drivechain::PARENT_REPLAY_STORE_DOMAIN};
+            if (thresholds.ecx_mainnet_upgrade) *writer << std::string{"ECX_MAINNET_PARENT_THRESHOLDS_V1"};
+            return 1;
         case 5: *writer << std::string{ElementsDrivechainIdentity::BIP300301_ENFORCER_REVISION}; return 1;
         case 6: *writer << std::string{ElementsDrivechainIdentity::BIP300301_LOCAL_RULE_DOMAIN}; return 1;
         case 7: *writer << std::string{ElementsDrivechainIdentity::BIP300301_LOCAL_RULE_ID}; return 1;
@@ -3167,12 +3200,12 @@ struct NativeReplayIdentity {
         case 27: *writer << consensus.drivechain_parent_state_ctip_vout; return 1;
         case 28: *writer << consensus.drivechain_parent_state_ctip_value; return 1;
         case 29: *writer << uint256S(ElementsDrivechainIdentity::PARENT_CHECKPOINT_BOOTSTRAP_STATE_COMMITMENT); return 1;
-        case 30: *writer << consensus.drivechain_unused_slot_proposal_max_age; return 1;
-        case 31: *writer << consensus.drivechain_unused_slot_activation_threshold; return 1;
-        case 32: *writer << consensus.drivechain_used_slot_proposal_max_age; return 1;
-        case 33: *writer << consensus.drivechain_used_slot_activation_threshold; return 1;
-        case 34: *writer << consensus.drivechain_withdrawal_bundle_max_age; return 1;
-        case 35: *writer << consensus.drivechain_withdrawal_bundle_inclusion_threshold; return 1;
+        case 30: *writer << thresholds.unused_proposal_max_age; return 1;
+        case 31: *writer << thresholds.unused_activation_threshold; return 1;
+        case 32: *writer << thresholds.used_proposal_max_age; return 1;
+        case 33: *writer << thresholds.used_activation_threshold; return 1;
+        case 34: *writer << thresholds.withdrawal_bundle_max_age; return 1;
+        case 35: *writer << thresholds.withdrawal_bundle_inclusion_threshold; return 1;
         case 36: *writer << consensus.drivechain_m6_withdrawal_validation; return 1;
         case 37: *writer << consensus.drivechain_parent_state_replay_version; return 1;
         case 38: identity = writer->GetHash(); return 1;
@@ -3240,6 +3273,7 @@ struct NativeCacheInitialization {
     std::string* error;
     bool force_rebuild;
     const Consensus::Params& consensus{Params().GetConsensus()};
+    const DrivechainParentReplayThresholds thresholds{GetDrivechainParentReplayThresholds(consensus)};
     uint256 active_genesis, store_identity, expected_bootstrap_commitment, ctip_hash;
     std::optional<Bitcoin::CBlock> genesis_block;
     NativeReplayIdentity identity{consensus, {}, {}};
@@ -3273,9 +3307,9 @@ struct NativeCacheInitialization {
         case 0: return ParentReplayBytes(consensus.drivechain_slot.has_value(), consensus.drivechain_slot.value_or(0),
             consensus.drivechain_proposal_hash.has_value(), consensus.drivechain_proposal_hash.value_or(uint256{}),
             consensus.drivechain_parent_state_active_proposal_hash.value_or(uint256{}), consensus.drivechain_parent_state_hash,
-            consensus.drivechain_unused_slot_proposal_max_age, consensus.drivechain_unused_slot_activation_threshold,
-            consensus.drivechain_used_slot_proposal_max_age, consensus.drivechain_used_slot_activation_threshold,
-            consensus.drivechain_withdrawal_bundle_max_age, consensus.drivechain_withdrawal_bundle_inclusion_threshold,
+            thresholds.unused_proposal_max_age, thresholds.unused_activation_threshold,
+            thresholds.used_proposal_max_age, thresholds.used_activation_threshold,
+            thresholds.withdrawal_bundle_max_age, thresholds.withdrawal_bundle_inclusion_threshold,
             consensus.drivechain_parent_state_replay_version, consensus.drivechain_proposal_description,
             consensus.drivechain_protocol_manifest_hash, consensus.drivechain_parent_state_active_proposal_description,
             consensus.drivechain_parent_state_proposal_height, consensus.drivechain_parent_state_proposal_block_hash,
@@ -3361,18 +3395,18 @@ struct NativeCacheInitialization {
         case 105: cache.proposal_hash = *consensus.drivechain_proposal_hash; return 1;
         case 106: cache.checkpoint_active_proposal_hash = consensus.drivechain_parent_state_active_proposal_hash.value_or(uint256{}); return 1;
         case 107: cache.checkpoint_hash = consensus.drivechain_parent_state_hash; return 1;
-        case 108: cache.unused_proposal_max_age = consensus.drivechain_unused_slot_proposal_max_age; return 1;
-        case 109: cache.unused_activation_threshold = consensus.drivechain_unused_slot_activation_threshold; return 1;
-        case 110: cache.used_proposal_max_age = consensus.drivechain_used_slot_proposal_max_age; return 1;
-        case 111: cache.used_activation_threshold = consensus.drivechain_used_slot_activation_threshold; return 1;
-        case 112: cache.withdrawal_bundle_max_age = consensus.drivechain_withdrawal_bundle_max_age; return 1;
-        case 113: cache.withdrawal_bundle_inclusion_threshold = consensus.drivechain_withdrawal_bundle_inclusion_threshold; return 1;
+        case 108: cache.unused_proposal_max_age = thresholds.unused_proposal_max_age; return 1;
+        case 109: cache.unused_activation_threshold = thresholds.unused_activation_threshold; return 1;
+        case 110: cache.used_proposal_max_age = thresholds.used_proposal_max_age; return 1;
+        case 111: cache.used_activation_threshold = thresholds.used_activation_threshold; return 1;
+        case 112: cache.withdrawal_bundle_max_age = thresholds.withdrawal_bundle_max_age; return 1;
+        case 113: cache.withdrawal_bundle_inclusion_threshold = thresholds.withdrawal_bundle_inclusion_threshold; return 1;
         case 114: cache.replay_version = consensus.drivechain_parent_state_replay_version; return 1;
         case 200: loaded.emplace(); return 1;
         case 201: return g_drivechain_parent_replay_store != nullptr;
         case 202:
             g_drivechain_parent_replay_store = std::make_unique<DrivechainParentReplayStore>(
-                gArgs.GetDataDirNet() / drivechain::PARENT_REPLAY_DIRECTORY,
+                gArgs.GetDataDirNet() / (thresholds.ecx_mainnet_upgrade ? "parent-replay-ecx-mainnet-v1" : drivechain::PARENT_REPLAY_DIRECTORY),
                 DRIVECHAIN_PARENT_REPLAY_DB_CACHE_BYTES,
                 /*wipe=*/gArgs.GetBoolArg("-reindex", false), drivechain::FROZEN_PARENT_RULES.history);
             return 1;
@@ -3424,6 +3458,7 @@ struct NativeCacheInitialization {
 uint32_t ReadReplayCacheIdentity(const DrivechainParentReplayCache& cache,
     const Consensus::Params& consensus,uint32_t step)
 {
+    const auto thresholds = GetDrivechainParentReplayThresholds(consensus);
     switch (step) {
     case 1: return cache.initialized;
     case 2: return consensus.drivechain_slot.has_value();
@@ -3432,12 +3467,12 @@ uint32_t ReadReplayCacheIdentity(const DrivechainParentReplayCache& cache,
     case 5: return cache.proposal_hash == *consensus.drivechain_proposal_hash;
     case 6: return cache.checkpoint_active_proposal_hash == consensus.drivechain_parent_state_active_proposal_hash.value_or(uint256{});
     case 7: return cache.checkpoint_hash == consensus.drivechain_parent_state_hash;
-    case 8: return cache.unused_proposal_max_age == consensus.drivechain_unused_slot_proposal_max_age;
-    case 9: return cache.unused_activation_threshold == consensus.drivechain_unused_slot_activation_threshold;
-    case 10: return cache.used_proposal_max_age == consensus.drivechain_used_slot_proposal_max_age;
-    case 11: return cache.used_activation_threshold == consensus.drivechain_used_slot_activation_threshold;
-    case 12: return cache.withdrawal_bundle_max_age == consensus.drivechain_withdrawal_bundle_max_age;
-    case 13: return cache.withdrawal_bundle_inclusion_threshold == consensus.drivechain_withdrawal_bundle_inclusion_threshold;
+    case 8: return cache.unused_proposal_max_age == thresholds.unused_proposal_max_age;
+    case 9: return cache.unused_activation_threshold == thresholds.unused_activation_threshold;
+    case 10: return cache.used_proposal_max_age == thresholds.used_proposal_max_age;
+    case 11: return cache.used_activation_threshold == thresholds.used_activation_threshold;
+    case 12: return cache.withdrawal_bundle_max_age == thresholds.withdrawal_bundle_max_age;
+    case 13: return cache.withdrawal_bundle_inclusion_threshold == thresholds.withdrawal_bundle_inclusion_threshold;
     case 14: return cache.replay_version == consensus.drivechain_parent_state_replay_version;
     default: throw std::logic_error("invalid replay cache identity check");
     }
@@ -3458,6 +3493,7 @@ bool EnsurePinnedDrivechainParentStateThroughLocked(const uint32_t target_height
 {
     const Consensus::Params& consensus = Params().GetConsensus();
     if (!CheckDrivechainParentRpcNetwork(consensus, error)) return false;
+    const auto thresholds = GetDrivechainParentReplayThresholds(consensus);
     namespace hs = drivechain::haskell;
     std::optional<uint256> block_hash;
     std::optional<Bitcoin::CBlock> block;
@@ -3540,9 +3576,9 @@ bool EnsurePinnedDrivechainParentStateThroughLocked(const uint32_t target_height
             case 16:
                 block_effects = MakeDrivechainParentBlockEffects(
                 *block, height, cache.slot, cache.proposal_hash,
-                consensus.drivechain_unused_slot_proposal_max_age, consensus.drivechain_unused_slot_activation_threshold,
-                consensus.drivechain_used_slot_proposal_max_age, consensus.drivechain_used_slot_activation_threshold,
-                consensus.drivechain_withdrawal_bundle_max_age, consensus.drivechain_withdrawal_bundle_inclusion_threshold,
+                thresholds.unused_proposal_max_age, thresholds.unused_activation_threshold,
+                thresholds.used_proposal_max_age, thresholds.used_activation_threshold,
+                thresholds.withdrawal_bundle_max_age, thresholds.withdrawal_bundle_inclusion_threshold,
                 *next_state, &*deposits, error, &*successful_withdrawals, &*withdrawal_proposals,
                 drivechain::FROZEN_PARENT_RULES.treasury_opcode, drivechain::FROZEN_PARENT_RULES.m6);
                 return block_effects(20480,0,{});
