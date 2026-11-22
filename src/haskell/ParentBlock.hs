@@ -317,11 +317,15 @@ instance ReplayTreasury Block where
                   if step == 0 && value == 7
                     then if result > 3 then pure (-1) else pure (fromIntegral result + if requiredActive then 4 else 0)
                     else pure (fromIntegral result)
-          status <- liftIO (validate (Replay.TransactionReplay (fromIntegral (B.length slots))
+          status <- liftIO (Replay.replayTreasuryTransaction (opcode == 0xb7) (Replay.TransactionReplay (fromIntegral (B.length slots))
             inputs outputs maximumMoney threshold single action))
           checked treasury 1008 status
+          when (opcode == 0xb7) (liftIO (effect treasury 1009 0 B.empty))
           visit (index+1)
     visit 1
+    when (opcode == 0xb7) $ do
+      complete <- liftIO (scalar treasury 1010 0)
+      unless (complete == 1) (checked treasury 1008 0x801)
 
 replayBlock :: (ReplayPreparation op, ReplayMessages op, ReplayMaintenance op, ReplayTreasury op) => op -> Checked ()
 replayBlock value = prepareBlock value >> replayMessages value >> beforeTreasury value >>

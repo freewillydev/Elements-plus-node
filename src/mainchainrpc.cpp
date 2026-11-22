@@ -2516,6 +2516,8 @@ struct NativeParentBlock {
         }
         return rows;
     }
+    // The ECX enforcer permits separate deposits only until this block closes.
+    std::map<Bitcoin::COutPoint, std::pair<uint8_t, CAmount>> unconsolidated_ctips;
     struct CtipChange {
         uint8_t slot;
         uint32_t output_index;
@@ -2528,6 +2530,10 @@ struct NativeParentBlock {
         std::set<uint8_t> active_set;
         std::map<Bitcoin::COutPoint,uint8_t> ctip_owner;
         std::set<uint8_t> ctip_spends;
+        std::set<uint8_t> treasury_spends;
+        std::set<Bitcoin::COutPoint> spent_ctips;
+        std::map<uint8_t, CAmount> input_values;
+        bool input_values_valid{true};
         std::map<uint8_t,uint32_t> new_ctips;
         std::vector<CtipChange> changes;
         size_t decreases{0}, owner_index{0};
@@ -2558,6 +2564,7 @@ struct NativeParentBlock {
                 fields.insert(fields.end(),{slot,static_cast<unsigned char>(!entry.active_proposal_hash.IsNull())});
             return fields;
         }
+        if (step == 1010) return words({unconsolidated_ctips.empty()});
         auto& tx = transaction_state.value();
         switch (step) {
         case 1002:
@@ -2577,6 +2584,9 @@ struct NativeParentBlock {
                 tx.address,{}, {}, {}});
             return {};
         case 1007: return words({tx.address_reader.value().Action(index)});
+        case 1009:
+            for (const auto& outpoint : tx.spent_ctips) unconsolidated_ctips.erase(outpoint);
+            return {};
         case 1008: {
             const int result = index;
             const auto fail = [&]() -> bool {
@@ -2590,6 +2600,8 @@ struct NativeParentBlock {
                 case 0x401: return SetError(error, strprintf("parent transaction spends slot %u CTIP without replacement", tx.replacement->second));
                 case 0x501: return SetError(error, strprintf("parent transaction creates a parallel treasury output for slot %u", tx.next_change.slot));
                 case 0x502: return SetError(error, strprintf("slot %u CTIP replacement has zero value delta", tx.next_change.slot));
+                case 0x503: return SetError(error, "parent treasury input total is outside the money range");
+                case 0x801: return SetError(error, "parent block leaves unconsolidated treasury outputs");
                 case 0x601: return SetError(error, "parent transaction ambiguously mixes M5 and M6 transitions");
                 case 0x602: return SetError(error, "BIP300 M6 must have one input and treasury vout 0");
                 case 0x604: return SetError(error, "BIP300 M6 slot changed while deriving its blinded id");
@@ -2621,6 +2633,8 @@ struct NativeParentBlock {
                 case 5: return tx.change->new_value;
                 case 6: return tx.change->output_index;
                 case 7: return (deposits != nullptr ? 1U : 0U) | (tx.change->slot == configured_slot ? 2U : 0U);
+                case 8: return tx.spent_ctips.size();
+                case 9: return tx.changes.size() == 1 && tx.ctip_spends.contains(tx.changes.front().slot);
                 default: throw std::logic_error("invalid treasury transaction fact");
                 }
             case 101:
@@ -2629,14 +2643,39 @@ struct NativeParentBlock {
                 tx.owner_value = &SlotCtipValue(state, tx.owner_slot, configured_slot);
                 return tx.owner_ctip->has_value();
             case 102: return *tx.owner_value;
-            case 103: return tx.ctip_owner.emplace(**tx.owner_ctip, tx.owner_slot).second;
+            case 103: {
+                if (!tx.ctip_owner.emplace(**tx.owner_ctip, tx.owner_slot).second) return 0;
+                if (treasury_opcode == drivechain::TreasuryOpcode::NOP8) {
+                    for (const auto& [outpoint, pending] : unconsolidated_ctips) {
+                        if (pending.first == tx.owner_slot &&
+                            !tx.ctip_owner.emplace(outpoint, tx.owner_slot).second) return 0;
+                    }
+                }
+                return 1;
+            }
             case 104: ++tx.owner_index; return 1;
             case 202: tx.owner = tx.ctip_owner.find(tx.transaction.vin[index].prevout); return tx.owner != tx.ctip_owner.end();
-            case 203: return tx.ctip_spends.insert(tx.owner->second).second ? 1 : 2;
+            case 203: {
+                const auto& [outpoint, slot] = *tx.owner;
+                if (treasury_opcode != drivechain::TreasuryOpcode::NOP8)
+                    return tx.ctip_spends.insert(slot).second ? 1 : 2;
+                if (!tx.spent_ctips.insert(outpoint).second) return 2;
+                tx.treasury_spends.insert(slot);
+                const auto pending = unconsolidated_ctips.find(outpoint);
+                const CAmount value = pending == unconsolidated_ctips.end()
+                    ? SlotCtipValue(state, slot, configured_slot) : pending->second.second;
+                if (pending == unconsolidated_ctips.end()) tx.ctip_spends.insert(slot);
+                auto& total = tx.input_values[slot];
+                if (!MoneyRange(value) || total > MAX_MONEY - value) tx.input_values_valid = false;
+                else total += value;
+                return 1;
+            }
             case 303: return tx.active_set.count(tx.output_slot) != 0;
             case 304: return tx.transaction.vout[index].nValue;
             case 305: return tx.new_ctips.emplace(tx.output_slot, static_cast<uint32_t>(index)).second;
-            case 401: return tx.ctip_spends.contains(tx.replacement->second);
+            case 401: return treasury_opcode == drivechain::TreasuryOpcode::NOP8
+                ? tx.treasury_spends.contains(tx.replacement->second)
+                : tx.ctip_spends.contains(tx.replacement->second);
             case 402: return tx.new_ctips.count(tx.replacement->second) != 0;
             case 403: ++tx.replacement; return 1;
             case 501:
@@ -2644,7 +2683,15 @@ struct NativeParentBlock {
                 tx.next_change.output_index = tx.change_entry->second;
                 return SlotCtip(state, tx.next_change.slot, configured_slot).has_value();
             case 502: return tx.ctip_spends.contains(tx.next_change.slot);
-            case 503: return tx.next_change.old_value = SlotCtipValue(state, tx.next_change.slot, configured_slot);
+            case 503:
+                if (treasury_opcode == drivechain::TreasuryOpcode::NOP8)
+                    return tx.next_change.old_value = tx.input_values_valid ? tx.input_values[tx.next_change.slot] : -1;
+                return tx.next_change.old_value = SlotCtipValue(state, tx.next_change.slot, configured_slot);
+            case 508:
+                return std::count_if(tx.spent_ctips.begin(), tx.spent_ctips.end(), [&](const auto& outpoint) {
+                    const auto pending = unconsolidated_ctips.find(outpoint);
+                    return pending != unconsolidated_ctips.end() && pending->second.first == tx.next_change.slot;
+                });
             case 504: tx.next_change.old_value = 0; return 1;
             case 505: return tx.next_change.new_value = tx.transaction.vout[tx.next_change.output_index].nValue;
             case 506: ++tx.decreases; return 1;
@@ -2659,10 +2706,26 @@ struct NativeParentBlock {
             case 606: return tx.change->slot == configured_slot;
             case 609: derived_withdrawals.push_back(DrivechainSuccessfulWithdrawal{tx.change->slot, tx.m6id, height, block.GetHash()}); return 1;
             case 610: tx.pending->erase(tx.approved); return 1;
-            case 611: case 702: SlotCtip(state, tx.change->slot, configured_slot) = Bitcoin::COutPoint(tx.transaction.GetHash(), tx.change->output_index); return 1;
-            case 612: case 703: SlotCtipValue(state, tx.change->slot, configured_slot) = tx.change->new_value; return 1;
+            case 611: case 702: {
+                const Bitcoin::COutPoint outpoint(tx.transaction.GetHash(), tx.change->output_index);
+                if (treasury_opcode == drivechain::TreasuryOpcode::NOP8 &&
+                    !tx.ctip_spends.contains(tx.change->slot) &&
+                    SlotCtip(state, tx.change->slot, configured_slot)) {
+                    unconsolidated_ctips.emplace(outpoint, std::pair{tx.change->slot, tx.change->new_value});
+                } else {
+                    SlotCtip(state, tx.change->slot, configured_slot) = outpoint;
+                }
+                return 1;
+            }
+            case 612: case 703:
+                if (treasury_opcode != drivechain::TreasuryOpcode::NOP8 ||
+                    tx.ctip_spends.contains(tx.change->slot) ||
+                    *SlotCtip(state, tx.change->slot, configured_slot) ==
+                        Bitcoin::COutPoint(tx.transaction.GetHash(), tx.change->output_index))
+                    SlotCtipValue(state, tx.change->slot, configured_slot) = tx.change->new_value;
+                return 1;
             case 704: return tx.address.size();
-            case 705: deposits->push_back(DrivechainMintableDeposit{*state.ctip, block.GetHash(), height, static_cast<CAmount>(index), std::move(tx.address)}); return 1;
+            case 705: deposits->push_back(DrivechainMintableDeposit{Bitcoin::COutPoint(tx.transaction.GetHash(), tx.change->output_index), block.GetHash(), height, static_cast<CAmount>(index), std::move(tx.address)}); return 1;
             case 800: tx.change = &tx.changes.at(index); tx.address.clear(); return 1;
             default: throw std::logic_error("invalid treasury transaction action");
             }

@@ -6423,6 +6423,143 @@ BOOST_AUTO_TEST_CASE(drivechain_parent_withdrawal_replay_requires_approved_m6)
     BOOST_CHECK_EQUAL(cross_slot.pending_withdrawals.front().votes, 2U);
 }
 
+
+BOOST_AUTO_TEST_CASE(ecx_parallel_treasuries_consolidate_within_parent_block)
+{
+    constexpr uint8_t slot{24};
+    const uint256 proposal = uint256::ONE;
+    const auto treasury = [](uint8_t number) {
+        return CScript() << OP_NOP8 << std::vector<unsigned char>{number} << OP_TRUE;
+    };
+    const Bitcoin::COutPoint old(uint256S("1111111111111111111111111111111111111111111111111111111111111111"), 0);
+    const auto initial = [&]() {
+        DrivechainParentReplayState state;
+        state.active_proposal_hash = proposal;
+        state.required_proposal_activated = true;
+        state.required_activation_height = 1;
+        state.ctip = old;
+        state.ctip_value = 5000;
+        return state;
+    };
+    const auto deposit = [&](CAmount amount, uint32_t nonce) {
+        Bitcoin::CMutableTransaction tx;
+        tx.nLockTime = nonce;
+        tx.vin.emplace_back(Bitcoin::COutPoint(uint256::ONE, nonce));
+        tx.vout.emplace_back(amount, treasury(slot));
+        tx.vout.emplace_back(0, CScript() << OP_RETURN << std::vector<unsigned char>{'d'});
+        return tx;
+    };
+    const auto join = [&](std::vector<Bitcoin::COutPoint> inputs, CAmount amount) {
+        Bitcoin::CMutableTransaction tx;
+        for (const auto& input : inputs) tx.vin.emplace_back(input);
+        tx.vout.emplace_back(amount, treasury(slot));
+        return tx;
+    };
+    const auto outpoint = [](const Bitcoin::CMutableTransaction& tx) {
+        return Bitcoin::COutPoint(tx.GetHash(), 0);
+    };
+    std::string error;
+    std::vector<DrivechainMintableDeposit> deposits;
+    const auto apply = [&](DrivechainParentReplayState& state,
+                           std::vector<Bitcoin::CMutableTransaction> transactions) {
+        Bitcoin::CMutableTransaction coinbase;
+        coinbase.vin.emplace_back(Bitcoin::COutPoint(), CScript() << OP_0);
+        Bitcoin::CBlock block;
+        block.vtx.push_back(Bitcoin::MakeTransactionRef(coinbase));
+        for (auto& tx : transactions) block.vtx.push_back(Bitcoin::MakeTransactionRef(std::move(tx)));
+        deposits.clear();
+        error.clear();
+        return ApplyDrivechainParentBlockState(block, 981006, slot, proposal,
+            10, 5, 10, 5, 10, 5, state, &deposits, &error, nullptr, nullptr,
+            drivechain::TreasuryOpcode::NOP8, DrivechainM6ReplayRule::SEQUENTIAL_M6);
+    };
+
+    auto empty = initial();
+    BOOST_REQUIRE_MESSAGE(apply(empty, {}), error);
+    BOOST_CHECK(empty.ctip == old);
+
+    const auto first = deposit(1000, 1);
+    const auto second = deposit(2000, 2);
+    const auto merged = join({outpoint(first), outpoint(second)}, 3000);
+    const auto consolidated = join({old, outpoint(merged)}, 8000);
+    auto state = initial();
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, second, merged, consolidated}), error);
+    BOOST_CHECK(state.ctip == outpoint(consolidated));
+    BOOST_CHECK_EQUAL(state.ctip_value, 8000);
+    BOOST_REQUIRE_EQUAL(deposits.size(), 2U);
+    BOOST_CHECK(deposits[0].outpoint == outpoint(first));
+    BOOST_CHECK(deposits[1].outpoint == outpoint(second));
+    BOOST_CHECK_EQUAL(deposits[0].value + deposits[1].value, 3000);
+
+    // Persisted state contains the final consolidated output only. Replaying
+    // from the pre-block state reproduces it without retaining temporary outputs.
+    DataStream encoded;
+    encoded << state;
+    DrivechainParentReplayState restored;
+    encoded >> restored;
+    BOOST_CHECK(restored.ctip == state.ctip);
+    BOOST_CHECK_EQUAL(restored.ctip_value, state.ctip_value);
+    state = initial();
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, second, merged, consolidated}), error);
+
+    state = initial();
+    BOOST_CHECK(!apply(state, {first}));
+    BOOST_CHECK_EQUAL(error, "parent block leaves unconsolidated treasury outputs");
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({outpoint(first)}, 900)}));
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first), outpoint(first)}, 7000)}));
+    state = initial();
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first)}, 6001)}));
+    // A positive net increase requires a following deposit address.
+    BOOST_CHECK_EQUAL(error, "positive CTIP replacement for slot 24 has no following address");
+    state = initial();
+    state.ctip_value = MAX_MONEY;
+    BOOST_CHECK(!apply(state, {first, join({old, outpoint(first)}, MAX_MONEY)}));
+    BOOST_CHECK_EQUAL(error, "parent treasury input total is outside the money range");
+
+    // M6 may consolidate a pending deposit too, but every input must belong to
+    // this treasury and the approved blinded withdrawal must use the full total.
+    auto withdrawal = join({old, outpoint(first)}, 5500);
+    withdrawal.vout.emplace_back(500, CScript() << OP_TRUE);
+    Bitcoin::CMutableTransaction blinded(withdrawal);
+    blinded.vin.clear();
+    blinded.vout[0] = Bitcoin::CTxOut(0, CScript() << OP_RETURN << std::vector<unsigned char>(8, 0));
+    state = initial();
+    state.pending_withdrawals.push_back({blinded.GetHash(), 981005, 6});
+    BOOST_REQUIRE_MESSAGE(apply(state, {first, withdrawal}), error);
+    BOOST_CHECK_EQUAL(state.ctip_value, 5500);
+    BOOST_CHECK(state.ctip == outpoint(withdrawal));
+    BOOST_CHECK(state.pending_withdrawals.empty());
+    state = initial();
+    state.pending_withdrawals.push_back({blinded.GetHash(), 981005, 6});
+    withdrawal.vin.emplace_back(Bitcoin::COutPoint(uint256::ONE, 99));
+    BOOST_CHECK(!apply(state, {first, withdrawal}));
+
+    // Exact transaction bytes from ECX mainchain block 981006, hash
+    // 00000000000000000b4b6f13271a4c05baf6abaa1962d9aa1e6148b23ee1416b.
+    // This fixture tests treasury replay; parent header authentication is tested
+    // independently by the parent-context tests.
+    Bitcoin::CMutableTransaction live_deposit, live_consolidation;
+    DataStream deposit_bytes{ParseHex("02000000000101a5e43bec17d65b1d34efa6ea72c7888f4c3870f72db32a1a5e53f21943ba41400000000000fdffffff0340420f000000000004b701095100000000000000001e6a1c33756975326859797a50316e4e774e794c4846637a3947466e536a595bf61ac32200000016001469a8f8522678a3efa1d6db604625402b13db5e740247304402207a99ca82f3c27cc37131f94c680ae750ef02a0d135b01e65567345662c3d186b02204239da1aea4121abc27c6a46b0a6fe60a2227073842bed7fdca152a00f2079e90121024c1534899106493f3751e39cce891b71ec1b404eda38fdd9b3905722f89a959cfe64cd1d")};
+    deposit_bytes >> TX_WITH_WITNESS(live_deposit);
+    DataStream consolidation_bytes{ParseHex("02000000025c8ad756e5e442e45aaa1884794965f1bcefd47444851d1e30d8c2b0961bacd80000000000ffffffff7b3c08270264841e7a867a7530d3ef2ff5f40a9e9004a3336f0b8a1585de12ce0000000000ffffffff0180841e000000000004b701095100000000")};
+    consolidation_bytes >> TX_WITH_WITNESS(live_consolidation);
+    BOOST_CHECK_EQUAL(live_deposit.GetHash().GetHex(), "ce12de85158a0b6f33a304909e0af4f52fefd330757a867a1e84640227083c7b");
+    BOOST_CHECK_EQUAL(live_consolidation.GetHash().GetHex(), "4d5201220987e149825df3ac23ed505290bef39d2e249e82b6fcd2c4da4e2ffe");
+    state = initial();
+    auto& nine = state.other_slots[9];
+    nine.active_proposal_hash = proposal;
+    nine.ctip = Bitcoin::COutPoint(uint256S("d8ac1b96b0c2d8301e1d854474d4efbcf16549798418aa5ae442e4e556d78a5c"), 0);
+    nine.ctip_value = 1000000;
+    BOOST_REQUIRE_MESSAGE(apply(state, {live_deposit, live_consolidation}), error);
+    BOOST_CHECK_EQUAL(state.other_slots.at(9).ctip_value, 2000000);
+    BOOST_CHECK(state.other_slots.at(9).ctip == outpoint(live_consolidation));
+    BOOST_CHECK(state.ctip == old);
+    BOOST_CHECK_EQUAL(state.ctip_value, 5000);
+    BOOST_CHECK(deposits.empty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 struct NativeDepositRecipientSetup : BasicTestingSetup {

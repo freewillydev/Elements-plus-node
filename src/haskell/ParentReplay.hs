@@ -607,14 +607,17 @@ instance Validation M3Proposal where
 data M6Id = M6Id Word64 Word64 Int64 Int64 Word32 (Word32 -> Word64 -> IO Int64)
 instance Validation M6Id where
   type ValidationResult M6Id = IO Int32
-  validate (M6Id outputs inputs previous maximumValue hasSlot action)
+  validate = replayM6Id False
+
+replayM6Id :: Bool -> M6Id -> IO Int32
+replayM6Id consolidate (M6Id outputs inputs previous maximumValue hasSlot action)
     | maximumValue < 0 || hasSlot > 1 = pure (-1)
     | otherwise = action 1 0 >>= \cleared ->
         if cleared /= 1 then pure (-1)
         else if outputs == 0 then pure 1
         else action 2 0 >>= \parsed -> case parsed of
           0 -> pure 2
-          1 | inputs /= 1 -> pure 3
+          1 | inputs == 0 || (not consolidate && inputs /= 1) -> pure 3
             | not (amount previous) -> pure 4
             | otherwise -> action 3 0 >>= \replacement ->
                 if not (amount replacement) then pure 4 else total replacement 1 0
@@ -657,12 +660,15 @@ instance Validation PruneSlots where
 data M6Withdrawal = M6Withdrawal Word64 Word64 Word64 Word32 Word32 (Word32 -> IO Int64)
 instance Validation M6Withdrawal where
   type ValidationResult M6Withdrawal = IO Int32
-  validate (M6Withdrawal decreases changes inputs threshold single action)
+  validate = replayM6Withdrawal False
+
+replayM6Withdrawal :: Bool -> M6Withdrawal -> IO Int32
+replayM6Withdrawal consolidate (M6Withdrawal decreases changes inputs threshold single action)
     | single > 1 = pure (-1)
     | decreases /= 1 || changes /= 1 = pure 1
     | otherwise = action 1 >>= \output ->
         if output < 0 || output > 0xffffffff then pure (-1)
-        else if inputs /= 1 || output /= 0 then pure 2
+        else if inputs == 0 || (not consolidate && inputs /= 1) || output /= 0 then pure 2
         else check 2 3 $ check 3 4 $ check 4 5 $
           action 5 >>= \votes ->
             if votes < 0 || votes > 65535 then pure (-1)
@@ -706,17 +712,25 @@ instance Validation M5Deposit where
 data CtipChanges = CtipChanges Word64 (Word32 -> IO Int64)
 instance Validation CtipChanges where
   type ValidationResult CtipChanges = IO Int32
-  validate (CtipChanges count action) = repeatEntries count $
+  validate (CtipChanges count action) = replayCtipChanges False count action
+
+-- ECX permits deposits to remain separate until consolidation in this block.
+replayCtipChanges :: Bool -> Word64 -> (Word32 -> IO Int64) -> IO Int32
+replayCtipChanges consolidate count action = repeatEntries count $
     action 1 >>= \present -> case present of
       0 -> action 4 >>= \cleared -> if cleared == 1 then prepare 0 else pure (-1)
       1 -> action 2 >>= \spent -> case spent of
-        0 -> pure 1
+        0 | consolidate -> action 3 >>= prepare
+          | otherwise -> pure 1
         1 -> action 3 >>= prepare
         _ -> pure (-1)
       _ -> pure (-1)
     where
       prepare old = action 5 >>= \new ->
-        if new == old then pure 2
+        if consolidate && old < 0 then pure 3
+        else if new == old then
+          if consolidate then action 8 >>= \pending -> if pending > 0 then publish else pure 2
+          else pure 2
         else if (fromIntegral new :: Word64) < fromIntegral old
           then action 6 >>= \counted -> if counted == 1 then publish else pure (-1)
           else publish
@@ -729,7 +743,10 @@ data TransactionReplay = TransactionReplay Word64 Word64 Word64 Word64 Word32 Wo
   (Word32 -> Word64 -> IO Int64)
 instance Validation TransactionReplay where
   type ValidationResult TransactionReplay = IO Int32
-  validate (TransactionReplay slots inputs outputs maximumValue threshold single native) =
+  validate = replayTreasuryTransaction False
+
+replayTreasuryTransaction :: Bool -> TransactionReplay -> IO Int32
+replayTreasuryTransaction consolidate (TransactionReplay slots inputs outputs maximumValue threshold single native) =
     either id (const 0) <$> runExceptT (do
       when (maximumValue > fromIntegral (maxBound :: Int64) || single > 1) (throwE (-1))
       check 1 =<< liftIO (validate (CtipOwners slots maximumValue (one 1)))
@@ -738,16 +755,20 @@ instance Validation TransactionReplay where
       owners <- count 0
       check 4 =<< liftIO (validate (CtipReplacements owners (fmap narrow . one 4)))
       replacements <- count 1
-      check 5 =<< liftIO (validate (CtipChanges replacements (one 5)))
+      check 5 =<< liftIO (replayCtipChanges consolidate replacements (one 5))
       changes <- count 2
       when (changes /= 0) $ do
         decreases <- count 3
         if decreases /= 0 then do
+          when consolidate $ do
+            knownInputs <- count 8
+            canonical <- liftIO (native 0 9)
+            unless (knownInputs == inputs && canonical == 1) (throwE 0x602)
           idResult <- liftIO (newIORef 0)
-          result <- liftIO (validate (M6Withdrawal decreases changes inputs threshold single $ \step ->
+          result <- liftIO (replayM6Withdrawal consolidate (M6Withdrawal decreases changes inputs threshold single $ \step ->
             if step /= 2 then one 6 step else do
               previous <- native 0 4
-              status <- validate (M6Id outputs inputs previous (fromIntegral maximumValue) 1 (call 9))
+              status <- replayM6Id consolidate (M6Id outputs inputs previous (fromIntegral maximumValue) 1 (call 9))
               writeIORef idResult status
               pure (if status == 0 then 1 else 0)))
           check 9 =<< liftIO (readIORef idResult)
@@ -775,8 +796,10 @@ instance Validation TransactionReplay where
         output <- count 6
         flags <- liftIO (native 0 7)
         when (flags < 0 || flags > 7) (throwE (-1))
-        check 7 =<< liftIO (validate (M5Deposit old new maximumValue output outputs
-          (fromIntegral flags) (call 7)))
+        if consolidate && new == old
+          then check 7 =<< liftIO (runRequiredEffects (\step -> call 7 step 0) [2,3])
+          else check 7 =<< liftIO (validate (M5Deposit old new maximumValue output outputs
+            (fromIntegral flags) (call 7)))
         deposits (remaining-1) (index+1)
 
 data CtipReplacements = CtipReplacements Word64 (Word32 -> IO Int32)
